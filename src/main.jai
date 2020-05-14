@@ -110,7 +110,7 @@ HIGH_SHADOW_MAP_SIZE   :: 2048;
 PLAY_AREA_SIZE :: 11;
 
 game: struct {
-    core: Retro.Core;
+    core: RetroGL.GL_Core;
 
     static: [..]AABB;
 
@@ -738,7 +738,7 @@ render :: () {
     {
         game.view = matrix4_identity();
         game.projection = orthographic_projection_matrix(0, 1, 0, 1, -1, 1);
-        draw_textured_quad(make_Quad(0.1, 0.1, 0.8, 0.8), RetroGL.get_video_texture());
+        draw_textured_quad(make_Quad(0.1, 0.1, 0.8, 0.8), RetroGL.get_video_texture(*game.core));
     }
 
     if game.mode == .MENU then render_menu();
@@ -1387,7 +1387,7 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
 
         assert(glGetError() == GL_NO_ERROR);
 
-        game.core.run();
+        RetroGL.advance_frame(*game.core);
 
         game.down_pressed = false;
         game.up_pressed = false;

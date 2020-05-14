@@ -9,7 +9,9 @@
 
 #import "Retro";
 
-g_video: struct {
+GL_Core :: struct {
+    using core: Core;
+
 	tex_id: GLuint;
 	pitch: GLuint;
 	tex_w: GLint;
@@ -24,10 +26,13 @@ g_video: struct {
     window_width, window_height: s32;
 };
 
+g_video: *GL_Core; // TODO: do we need this global, or is there a way to sneak userdata in through libretro calls?
 
 core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
     ctx: Context;
     push_context ctx {
+    assert(g_video != null);
+
     if cmd == {
         case Environment_Command.GET_LOG_INTERFACE;
             cb := cast(*Log_Callback)data;
@@ -92,6 +97,11 @@ video_set_pixel_format :: (format: Pixel_Format) -> bool {
  */
 
 video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
+    ctx: Context;
+    push_context ctx {
+    assert(g_video != null);
+    }
+
 	if g_video.clip_w != width || g_video.clip_h != height {
 		g_video.clip_w = width;
 		g_video.clip_h = height;
@@ -113,6 +123,8 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
 refresh_vertex_data :: () #c_call {
     ctx: Context;
     push_context ctx {
+        assert(g_video != null);
+
         assert(g_video.tex_w != 0);
         assert(g_video.tex_h != 0);
         assert(g_video.clip_w != 0);
@@ -140,6 +152,7 @@ on_window_resized :: (window: *Window_Type, w: u32, h: u32) {
 }
 
 video_configure :: (geom: *Game_Geometry) {
+    assert(g_video != null);
     assert(glGetError() == GL_NO_ERROR);
 	nwidth: s32;
     nheight: s32;
@@ -224,12 +237,14 @@ video_configure :: (geom: *Game_Geometry) {
 	refresh_vertex_data();
 }
 
-// This will identify our vertex buffer
-vertexbuffer: GLuint;
+get_video_texture :: (core: *GL_Core) -> u32 {
+    return core.tex_id;
+}
 
-get_video_texture :: () -> u32 { return g_video.tex_id; }
+load_core :: (core: *GL_Core, filename: string) -> success: bool {
+    g_video = core;
+    defer g_video = null;
 
-load_core :: (core: *Core, filename: string) -> success: bool {
     if !load_core_funcs(core, filename)
         return false;
 
@@ -239,8 +254,6 @@ load_core :: (core: *Core, filename: string) -> success: bool {
     print("api_version: %\n", core.api_version());
 
     set_environment(core_environment);
-
-
     core.init();
     set_video_refresh(core_video_refresh);
 
@@ -248,7 +261,14 @@ load_core :: (core: *Core, filename: string) -> success: bool {
     return true;
 }
 
-load_game :: (core: *Core, filename: string) -> success: bool {
+advance_frame :: (core: *GL_Core) {
+    g_video = core;
+    defer g_video = null;
+
+    core.run();
+}
+
+load_game :: (core: *GL_Core, filename: string) -> success: bool {
     info: Game_Info;
     info.path = temp_c_string(filename);
 
@@ -275,6 +295,9 @@ load_game :: (core: *Core, filename: string) -> success: bool {
 
         info.data = data.data;
     }
+
+    g_video = core;
+    defer g_video = null;
 
     if !core.load_game(*info) {
         log_eprintln("The core failed to load the game.");
