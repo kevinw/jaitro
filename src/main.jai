@@ -18,6 +18,9 @@ Pool :: #import "Pool";
 #load "util.jai";
 #load "physics.jai";
 
+Retro :: #import "Retro";
+RetroGL :: #import "RetroGL";
+
 #if OS_WINDOWS {
     // press ` (~) to show the imgui debug ui for editing settings live.
     DEBUG_UI :: true; 
@@ -107,6 +110,8 @@ HIGH_SHADOW_MAP_SIZE   :: 2048;
 PLAY_AREA_SIZE :: 11;
 
 game: struct {
+    core: Retro.Core;
+
     static: [..]AABB;
 
     settings: struct {
@@ -643,6 +648,7 @@ render_game :: () {
             draw_text(game.font, color, offset, game.window_height / 2 + FONT_HEIGHT / 2, GAME_OVER_TEXT, game.stats.num_enemies_defeated, button_or_key_name);
         }
     }
+
 }
 
 
@@ -727,8 +733,15 @@ render :: () {
     defer if game.msaa glDisable(GL_MULTISAMPLE);
 
     use_frame_buffer(*game.game_framebuffer);
-    render_game();
-    if game.mode == game.mode.MENU then render_menu();
+    //render_game();
+
+    {
+        game.view = matrix4_identity();
+        game.projection = orthographic_projection_matrix(0, 1, 0, 1, -1, 1);
+        draw_textured_quad(make_Quad(0.1, 0.1, 0.8, 0.8), RetroGL.get_video_texture());
+    }
+
+    if game.mode == .MENU then render_menu();
     use_frame_buffer(null);
 
     proj := game.projection;
@@ -748,6 +761,7 @@ render :: () {
 
     window_fb_width, window_fb_height := get_framebuffer_dimensions(null);
     glBlitFramebuffer(0, 0, fb.width, fb.height, 0, 0, window_fb_width, window_fb_height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
     glFlush();
 
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1371,6 +1385,10 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
         need_to_render = true;
         update(xx TICK_PERIOD);
 
+        assert(glGetError() == GL_NO_ERROR);
+
+        game.core.run();
+
         game.down_pressed = false;
         game.up_pressed = false;
         game.left_pressed = false;
@@ -1416,9 +1434,15 @@ new_imgui_frame :: (window: *void) {
 }
 }
 
+Debug :: #import "Debug";
+
 // @Note see macosx.jai for the MacOSX entry point that uses Cocoa/AppKit's run loop.
 main :: () {
+    change_to_runtree_dir();
+    Debug.init();
+
     init_game();
+
 
     DEFAULT_WIN_WIDTH :: 1280;
     DEFAULT_WIN_HEIGHT :: 720;
@@ -1427,6 +1451,13 @@ main :: () {
     window_handle = xx window;
     gl_create_context(window, 3, 2);
     gl_load(*gl);
+    assert(glGetError() == GL_NO_ERROR);
+
+    core_name := "mesen_libretro.dll";
+    rom_name  := "Legend of Zelda, The (U) (PRG1) [!].nes";
+    if (!RetroGL.load_core(*game.core, core_name)) exit(1);
+    if (!RetroGL.load_game(*game.core, rom_name)) exit(1);
+    assert(glGetError() == GL_NO_ERROR);
 
     if GL_VERSION_4_3 {
         glDebugMessageCallback(debug_callback, *context);
@@ -1502,4 +1533,17 @@ main :: () {
     }
 
     fini_game();
+}
+
+
+change_to_runtree_dir :: () {
+    if running_at_compile_time() {
+        set_working_directory(sprint("%1%2", #filepath, "../run_tree"));
+    } else {
+        #if OS_MACOSX {
+            set_working_directory(osx_get_bundle_resources_directory());
+        } else {
+            set_working_directory(path_strip_filename(get_path_of_running_executable()));
+        }
+    }
 }

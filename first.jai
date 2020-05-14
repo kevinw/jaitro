@@ -31,6 +31,7 @@ build :: (building_executable := true, build_release := false) -> Workspace {
     opts.output_type = Build_Output_Type.EXECUTABLE;
     opts.output_executable_name = GAME_NAME;
     opts.output_path = "run_tree/";
+    array_add(*opts.modules_search_path_array, "src/modules/");
     w := compiler_create_workspace(sprint("% by Kevin Watters", GAME_NAME)); // I think this @Leaks ?
     if building_executable then compiler_begin_intercept(w);
 
