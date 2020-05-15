@@ -18,14 +18,114 @@ log_eprintln :: (msg: string, args: ..Any) {
 g_win: *Window_Type;
 g_scale :: 3.0;
 
-g_texcoords := {:float:
-	0.0,  1.0,
-	0.0,  0.0,
-	1.0,  1.0,
-	1.0,  0.0,
-};
+Device :: enum u32 {
+/* Input disabled. */
+NONE ::         0;
 
-EXIT_FAILURE :: -1;
+/* The JOYPAD is called RetroPad. It is essentially a Super Nintendo
+ * controller, but with additional L2/R2/L3/R3 buttons, similar to a
+ * PS1 DualShock. */
+JOYPAD ::      1;
+
+/* The mouse is a simple mouse, similar to Super Nintendo's mouse.
+ * X and Y coordinates are reported relatively to last poll (poll callback).
+ * It is up to the libretro implementation to keep track of where the mouse
+ * pointer is supposed to be on the screen.
+ * The frontend must make sure not to interfere with its own hardware
+ * mouse pointer.
+ */
+MOUSE ::       2;
+
+/* KEYBOARD device lets one poll for raw key pressed.
+ * It is poll based, so input callback will return with the current
+ * pressed state.
+ * For event/text based keyboard input, see
+ * RETRO_ENVIRONMENT_SET_KEYBOARD_CALLBACK.
+ */
+KEYBOARD ::    3;
+
+/* LIGHTGUN device is similar to Guncon-2 for PlayStation 2.
+ * It reports X/Y coordinates in screen space (similar to the pointer)
+ * in the range [-0x8000, 0x7fff] in both axes, with zero being center and
+ * -0x8000 being out of bounds.
+ * As well as reporting on/off screen state. It features a trigger,
+ * start/select buttons, auxiliary action buttons and a
+ * directional pad. A forced off-screen shot can be requested for
+ * auto-reloading function in some games.
+ */
+LIGHTGUN ::    4;
+
+/* The ANALOG device is an extension to JOYPAD (RetroPad).
+ * Similar to DualShock2 it adds two analog sticks and all buttons can
+ * be analog. This is treated as a separate device type as it returns
+ * axis values in the full analog range of [-0x7fff, 0x7fff],
+ * although some devices may return -0x8000.
+ * Positive X axis is right. Positive Y axis is down.
+ * Buttons are returned in the range [0, 0x7fff].
+ * Only use ANALOG type when polling for analog values.
+ */
+ANALOG ::      5;
+
+/* Abstracts the concept of a pointing mechanism, e.g. touch.
+ * This allows libretro to query in absolute coordinates where on the
+ * screen a mouse (or something similar) is being placed.
+ * For a touch centric device, coordinates reported are the coordinates
+ * of the press.
+ *
+ * Coordinates in X and Y are reported as:
+ * [-0x7fff, 0x7fff]: -0x7fff corresponds to the far left/top of the screen,
+ * and 0x7fff corresponds to the far right/bottom of the screen.
+ * The "screen" is here defined as area that is passed to the frontend and
+ * later displayed on the monitor.
+ *
+ * The frontend is free to scale/resize this screen as it sees fit, however,
+ * (X, Y) = (-0x7fff, -0x7fff) will correspond to the top-left pixel of the
+ * game image, etc.
+ *
+ * To check if the pointer coordinates are valid (e.g. a touch display
+ * actually being touched), PRESSED returns 1 or 0.
+ *
+ * If using a mouse on a desktop, PRESSED will usually correspond to the
+ * left mouse button, but this is a frontend decision.
+ * PRESSED will only return 1 if the pointer is inside the game screen.
+ *
+ * For multi-touch, the index variable can be used to successively query
+ * more presses.
+ * If index = 0 returns true for _PRESSED, coordinates can be extracted
+ * with _X, _Y for index = 0. One can then query _PRESSED, _X, _Y with
+ * index = 1, and so on.
+ * Eventually _PRESSED will return false for an index. No further presses
+ * are registered at this point. */
+POINTER ::     6;
+}
+
+/* Buttons for the RetroPad (JOYPAD).
+ * The placement of these is equivalent to placements on the
+ * Super Nintendo controller.
+ * L2/R2/L3/R3 buttons correspond to the PS1 DualShock.
+ * Also used as id values for RETRO_DEVICE_INDEX_ANALOG_BUTTON */
+DEVICE_ID_JOYPAD_B        :: 0;
+DEVICE_ID_JOYPAD_Y        :: 1;
+DEVICE_ID_JOYPAD_SELECT   :: 2;
+DEVICE_ID_JOYPAD_START    :: 3;
+DEVICE_ID_JOYPAD_UP       :: 4;
+DEVICE_ID_JOYPAD_DOWN     :: 5;
+DEVICE_ID_JOYPAD_LEFT     :: 6;
+DEVICE_ID_JOYPAD_RIGHT    :: 7;
+DEVICE_ID_JOYPAD_A        :: 8;
+DEVICE_ID_JOYPAD_X        :: 9;
+DEVICE_ID_JOYPAD_L        :: 10;
+DEVICE_ID_JOYPAD_R        :: 11;
+DEVICE_ID_JOYPAD_L2       :: 12;
+DEVICE_ID_JOYPAD_R2       :: 13;
+DEVICE_ID_JOYPAD_L3       :: 14;
+DEVICE_ID_JOYPAD_R3       :: 15;
+
+/* Returned from retro_get_region(). */
+Region :: enum u32 {
+   NTSC  :: 0;
+   PAL   :: 1;
+}
 
 Log_Level :: enum s32 {
    DEBUG :: 0;
@@ -40,8 +140,11 @@ Log_Callback :: struct {
    log: Log_Printf;
 };
 
+// core function callback types
 Environment :: #type (cmd: Environment_Command, data: *void) -> bool #c_call;
 Video_Refresh :: #type (data: *void, width: u32, height: u32, pitch: int) #c_call;
+Input_Poll :: #type () #c_call;
+Input_State :: #type (port: u32, device: Device, index: u32, id: u32) -> s16 #c_call;
 
 RETRO_ENVIRONMENT_EXPERIMENTAL :: 0x10000;
 
@@ -928,6 +1031,21 @@ System_AV_Info :: struct {
    timing: System_Timing;
 };
 
+Variable :: struct {
+   /* Variable to query in RETRO_ENVIRONMENT_GET_VARIABLE.
+    * If NULL, obtains the complete environment string if more
+    * complex parsing is necessary.
+    * The environment string is formatted as key-value pairs
+    * delimited by semicolons as so:
+    * "key1=value1;key2=value2;..."
+    */
+   key: *u8;
+
+   /* Value to be obtained. If key does not exist, it is set to NULL. */
+   value: *u8;
+};
+
+
 Game_Info :: struct {
    path: *u8;              /* Path to game, UTF-8 encoded.
                             * Sometimes used as a reference for building other paths.
@@ -942,6 +1060,25 @@ Game_Info :: struct {
    size: int;              /* Size of memory buffer. */
    meta: *u8;              /* String of implementation specific meta-data. */
 };
+
+Controller_Description :: struct {
+   /* Human-readable description of the controller. Even if using a generic
+    * input device type, this can be set to the particular device type the
+    * core uses. */
+   desc: *u8;
+
+   /* Device type passed to retro_set_controller_port_device(). If the device
+    * type is a sub-class of a generic input device type, use the
+    * RETRO_DEVICE_SUBCLASS macro to create an ID.
+    *
+    * E.g. RETRO_DEVICE_SUBCLASS(RETRO_DEVICE_JOYPAD, 1). */
+   id: u32;
+}
+
+Controller_Info :: struct {
+    types: *Controller_Description;
+    num_types: u32;
+}
 
 Core :: struct {
 	handle: *void;
@@ -998,46 +1135,6 @@ load_core_funcs :: (core: *Core, filename: string) -> success: bool {
     return true;
 }
 
-resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
-	<<dw = sw;
-	<<dh = sh;
-
-	if ratio <= 0
-		ratio = cast(float64)sw / sh;
-
-	if cast(float)sw / sh < 1 {
-		(<<dw) = cast(s32)((<<dh) * ratio);
-    } else {
-		(<<dh) = cast(s32)((<<dw) / ratio);
-    }
-}
-
 unload_core :: (core: *Core) {
     print("TODO: unload core\n");
-}
-
-panic :: (msg: string) {
-    assert(false, msg);
-    exit(1);
-}
-
-core_log :: (level: Log_Level, fmt: *u8, args:..*void) #c_call {
-    ctx: Context;
-    push_context ctx {
-    write_string(to_string(fmt));
-    }
-    /*
-    levelstr := {:string: "dbg", "inf", "wrn", "err" };
-
-	if level == 0 return;
-
-    ctx: Context;
-    push_context ctx {
-        fmt_s := to_string(fmt);
-        print("[%] %\n", levelstr[level], tprint(fmt_s, ..args));
-        if level == .ERROR
-            exit(EXIT_FAILURE);
-    }
-    */
-
 }

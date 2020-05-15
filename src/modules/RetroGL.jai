@@ -1,6 +1,8 @@
+// thank you https://github.com/heuripedes/nanoarch
+
 #import "Basic";
 #import "GL";
-#import "Input";
+Input :: #import "Input";
 #import "Render";
 #import "Window_Creation";
 #import "String";
@@ -8,6 +10,20 @@
 #import "Math";
 
 #import "Retro";
+
+Key_Code :: Input.Key_Code;
+
+Keymap :: struct {
+    k: Key_Code;
+    rk: u32;
+}
+
+make_keymap :: (k: Key_Code, rk: u32) -> Keymap {
+    key_map: Keymap;
+    key_map.k = k;
+    key_map.rk = rk;
+    return key_map;
+}
 
 GL_Core :: struct {
     using core: Core;
@@ -24,6 +40,9 @@ GL_Core :: struct {
 	bpp: GLuint;
 
     window_width, window_height: s32;
+
+    joy: [DEVICE_ID_JOYPAD_R3 + 1]s16;
+    binds: [11]Keymap;
 };
 
 g_video: *GL_Core; // TODO: do we need this global, or is there a way to sneak userdata in through libretro calls?
@@ -34,23 +53,44 @@ core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
     assert(g_video != null);
 
     if cmd == {
-        case Environment_Command.GET_LOG_INTERFACE;
+        case .GET_LOG_INTERFACE;
             cb := cast(*Log_Callback)data;
             cb.log = core_log;
-        case Environment_Command.GET_CAN_DUPE;
+        case .GET_CAN_DUPE;
             bval := cast(*bool)data;
             << bval = true;
-        case Environment_Command.SET_PIXEL_FORMAT;
+        case .SET_PIXEL_FORMAT;
             fmt := cast(*Pixel_Format)data;
             if (<< fmt) > Pixel_Format.RGB565
                 return false;
             return video_set_pixel_format(<< fmt);
-        case Environment_Command.GET_SYSTEM_DIRECTORY;
+        case .GET_SYSTEM_DIRECTORY;
             <<(cast(**u8)data) = ".";
-        case Environment_Command.GET_SAVE_DIRECTORY;
+        case .GET_SAVE_DIRECTORY;
             <<(cast(**u8)data) = ".";
-        case Environment_Command.GET_VARIABLE_UPDATE;
+        case .GET_VARIABLE_UPDATE;
             <<(cast(*bool)data) = false;
+        case .SET_VARIABLES;
+            var := cast(*Variable)data;
+            while true {
+                if var.key == null && var.value == null break;
+                print("set variables predeclared: % %\n", to_string(var.key), to_string(var.value));
+                var = var + 1;
+            }
+        case .GET_VARIABLE;
+            var := cast(*Variable)data;
+            print("! GET_VARIABLE %: %\n", to_string(var.key), var.value);
+        case .SET_CONTROLLER_INFO;
+            info := cast(*Controller_Info)data;
+            print("---controllers:\n");
+            for i: 0..info.num_types-1 {
+                controller_desc := info.types[i];
+                print("  %, id=%\n", to_string(controller_desc.desc), controller_desc.id); 
+            }
+        case .SET_GEOMETRY;
+            geo := << cast(*Game_Geometry)data;
+            print("TODO: handle SET_GEOMETRY %\n", geo);
+
         case;
             print("Unhandled env %\n", cmd);
             return false;
@@ -121,6 +161,7 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
 }
 
 refresh_vertex_data :: () #c_call {
+    /*
     ctx: Context;
     push_context ctx {
         assert(g_video != null);
@@ -138,6 +179,7 @@ refresh_vertex_data :: () #c_call {
 
         print("TODO: refresh_vertex_data wants to do uv stuff\n");
     }
+    */
 }
 core_video_refresh :: (data: *void, width: u32, height: u32, pitch: int) #c_call {
     ctx: Context;
@@ -147,11 +189,27 @@ core_video_refresh :: (data: *void, width: u32, height: u32, pitch: int) #c_call
     }
 }
 
-on_window_resized :: (window: *Window_Type, w: u32, h: u32) {
+on_window_resized :: (window: *Input.Window_Type, w: u32, h: u32) {
     glViewport(0, 0, w, h);
 }
 
+resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
+	<<dw = sw;
+	<<dh = sh;
+
+	if ratio <= 0
+		ratio = cast(float64)sw / sh;
+
+	if cast(float)sw / sh < 1 {
+		(<<dw) = cast(s32)((<<dh) * ratio);
+    } else {
+		(<<dh) = cast(s32)((<<dw) / ratio);
+    }
+}
+
+
 video_configure :: (geom: *Game_Geometry) {
+    print("video_configure with %\n", << geom);
     assert(g_video != null);
     assert(glGetError() == GL_NO_ERROR);
 	nwidth: s32;
@@ -224,6 +282,9 @@ video_configure :: (geom: *Game_Geometry) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
+    print("tex image created with max_width % and max_height %\n", geom.max_width, geom.max_height);
+    print("clip_w/h is % %\n", geom.base_width, geom.base_height);
+
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, geom.max_width, geom.max_height, 0,
 			g_video.pixtype, g_video.pixfmt, null);
 
@@ -241,6 +302,17 @@ get_video_texture :: (core: *GL_Core) -> u32 {
     return core.tex_id;
 }
 
+get_video_texture_uv :: (core: *GL_Core) -> Vector2 {
+    return make_vector2(
+        cast(float)core.clip_w / core.tex_w,
+        cast(float)core.clip_h / core.tex_h,
+    );
+}
+
+get_video_texture_aspect :: (core: *GL_Core) -> float {
+    return cast(float)core.clip_w / core.clip_h;
+}
+
 load_core :: (core: *GL_Core, filename: string) -> success: bool {
     g_video = core;
     defer g_video = null;
@@ -248,14 +320,18 @@ load_core :: (core: *GL_Core, filename: string) -> success: bool {
     if !load_core_funcs(core, filename)
         return false;
 
-    set_environment: (Environment) #foreign =     load_and_check_sym(core.handle, "retro_set_environment");
-    set_video_refresh: (Video_Refresh) #foreign = load_and_check_sym(core.handle, "retro_set_video_refresh");
+    set_environment: (Environment) #foreign        = load_and_check_sym(core.handle, "retro_set_environment");
+    set_video_refresh: (Video_Refresh) #foreign    = load_and_check_sym(core.handle, "retro_set_video_refresh");
+	set_input_poll: (Input_Poll) #foreign          = load_and_check_sym(core.handle, "retro_set_input_poll");
+	set_input_state: (Input_State) #foreign        = load_and_check_sym(core.handle, "retro_set_input_state");
 
     print("api_version: %\n", core.api_version());
 
     set_environment(core_environment);
     core.init();
     set_video_refresh(core_video_refresh);
+    set_input_poll(core_input_poll);
+    set_input_state(core_input_state);
 
     print("core % loaded.\n", filename);
     return true;
@@ -271,6 +347,22 @@ advance_frame :: (core: *GL_Core) {
 load_game :: (core: *GL_Core, filename: string) -> success: bool {
     info: Game_Info;
     info.path = temp_c_string(filename);
+
+    {
+        // TODO: can these be set in a constant array init declaration above? @Jai
+        core.binds[0]  = make_keymap(cast(Key_Code)(#char "X"), DEVICE_ID_JOYPAD_A);
+        core.binds[1]  = make_keymap(cast(Key_Code)(#char "Z"), DEVICE_ID_JOYPAD_B);
+        core.binds[2]  = make_keymap(cast(Key_Code)(#char "A"), DEVICE_ID_JOYPAD_Y);
+        core.binds[3]  = make_keymap(cast(Key_Code)(#char "S"), DEVICE_ID_JOYPAD_X);
+        core.binds[4]  = make_keymap(Key_Code.ARROW_UP, DEVICE_ID_JOYPAD_UP);
+        core.binds[5]  = make_keymap(Key_Code.ARROW_DOWN, DEVICE_ID_JOYPAD_DOWN);
+        core.binds[6]  = make_keymap(Key_Code.ARROW_LEFT, DEVICE_ID_JOYPAD_LEFT);
+        core.binds[7]  = make_keymap(Key_Code.ARROW_RIGHT, DEVICE_ID_JOYPAD_RIGHT);
+        core.binds[8]  = make_keymap(Key_Code.ENTER, DEVICE_ID_JOYPAD_START);
+        core.binds[9]  = make_keymap(Key_Code.BACKSPACE, DEVICE_ID_JOYPAD_SELECT);
+        core.binds[10] = make_keymap(0, 0);
+        print("%\n", core.binds);
+    }
 
     modtime, size, success := File_Utilities.file_modtime_and_size(filename);
     if !success {
@@ -310,4 +402,60 @@ load_game :: (core: *GL_Core, filename: string) -> success: bool {
     //audio_init(av.timing.sample_rate);
 
     return true;
+}
+
+panic :: (msg: string) {
+    assert(false, msg);
+    exit(1);
+}
+
+core_log :: (level: Log_Level, fmt: *u8, args:..*void) #c_call {
+    ctx: Context;
+    push_context ctx {
+    write_string(to_string(fmt));
+    }
+    /*
+    levelstr := {:string: "dbg", "inf", "wrn", "err" };
+
+	if level == 0 return;
+
+    ctx: Context;
+    push_context ctx {
+        fmt_s := to_string(fmt);
+        print("[%] %\n", levelstr[level], tprint(fmt_s, ..args));
+        if level == .ERROR
+            exit(EXIT_FAILURE);
+    }
+    */
+
+}
+
+core_input_poll :: () #c_call {
+    using g_video;
+
+    i := 0;
+    while binds[i].k != 0 && binds[i].rk != 0 {
+        button_state := Input.input_button_states[binds[i].k];
+        is_down_right_now := button_state & Input.Key_Current_State.DOWN;
+        if is_down_right_now
+            joy[binds[i].rk] = 1;
+        else
+            joy[binds[i].rk] = 0;
+        i += 1;
+    }
+}
+
+core_input_state :: (port: u32, device: Device, index: u32, id: u32) -> s16 #c_call {
+    using g_video;
+
+	if port || index || device != .JOYPAD {
+		return 0;
+    }
+    
+    res := joy[id];
+    if res != 0 {
+        ctx: Context;
+        push_context ctx { print("res for %: %\n", id, res); }
+    }
+    return res;
 }

@@ -366,6 +366,40 @@ draw_quad :: (q: Quad, color: Vector4) {
     glDrawArrays(GL_TRIANGLES, 0, xx vertices.count);
 }
 
+draw_unlit_2 :: (q: Quad, tex: Quad, texture: u32, flip_y: bool = false) {
+    shader := game.unlit_shader;
+    glUseProgram(shader);
+
+    uni_texture := glGetUniformLocation(shader, "diffuse_texture");
+    glUniform1i(uni_texture, 0);
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, texture);
+    
+    V :: make_Vertex;
+    
+    v0 := V(q.x0, q.y0, tex.x0, tex.y0);
+    v1 := V(q.x1, q.y0, tex.x1, tex.y0);
+    v2 := V(q.x1, q.y1, tex.x1, tex.y1);
+    v3 := V(q.x0, q.y1, tex.x0, tex.y1);
+    
+    vertices: [6] Vertex;
+    slice: [] Vertex = vertices;
+    set_quad(slice, v0, v1, v2, v3);
+    
+    glBindBuffer(GL_ARRAY_BUFFER, game.immediate_draw_buffer_id);
+    glBufferData(GL_ARRAY_BUFFER, size_of(Vertex)*vertices.count, vertices.data, GL_DYNAMIC_DRAW);
+    
+    glEnableVertexAttribArray(ATTRIB_POSITION);
+    defer glDisableVertexAttribArray(ATTRIB_POSITION);
+    glEnableVertexAttribArray(ATTRIB_TEXCOORDS);
+    defer glDisableVertexAttribArray(ATTRIB_TEXCOORDS);
+
+    glVertexAttribPointer(ATTRIB_POSITION, 2, GL_FLOAT, false, size_of(Vertex), null);
+    glVertexAttribPointer(ATTRIB_TEXCOORDS, 2, GL_FLOAT, false, size_of(Vertex), cast(*void) (size_of(float)*2));
+    glDrawArrays(GL_TRIANGLES, 0, xx vertices.count);
+    assert(glGetError() == GL_NO_ERROR);
+}
+
 draw_textured_quad :: (q: Quad, texture: u32) {
     shader := game.textured_quad_shader;
     use_shader_and_update_matrices(shader, matrix4_identity());

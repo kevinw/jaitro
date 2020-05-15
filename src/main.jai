@@ -177,6 +177,7 @@ game: struct {
     game_framebuffer: Framebuffer;
     textured_quad_shader: GLuint;
     untextured_quad_shader: GLuint;
+    unlit_shader: GLuint;
 
     lights: [..] *Light;
 
@@ -733,12 +734,34 @@ render :: () {
     defer if game.msaa glDisable(GL_MULTISAMPLE);
 
     use_frame_buffer(*game.game_framebuffer);
-    //render_game();
+    render_game();
 
     {
-        game.view = matrix4_identity();
-        game.projection = orthographic_projection_matrix(0, 1, 0, 1, -1, 1);
-        draw_textured_quad(make_Quad(0.1, 0.1, 0.8, 0.8), RetroGL.get_video_texture(*game.core));
+        W := 1.75;
+        H :: 1.75;
+
+        uv := RetroGL.get_video_texture_uv(*game.core);
+
+        tex := make_Quad(0, 0, 1, 1);
+        tex.x1 = uv.x;
+        tex.y1 = uv.y;
+
+        // flip ys
+        tex.y1 = 1.0 - tex.y1;
+        tex.y0 = 1.0 - tex.y0;
+
+        aspect := RetroGL.get_video_texture_aspect(*game.core);
+        W *= aspect;
+
+        // TODO: use glViewport with screenWidth and screenHeight to not have to use this
+        screen_aspect := cast(float) game.window_width / cast(float) game.window_height;
+        W /= screen_aspect;
+
+        draw_unlit_2(
+            make_Quad(-W*0.5, -H*0.5, W, H),
+            tex,
+            RetroGL.get_video_texture(*game.core),
+            flip_y=true);
     }
 
     if game.mode == .MENU then render_menu();
@@ -1218,16 +1241,27 @@ load_resources :: () {
     game.ambience = load_audio_file("data/bgm.ogg");
 
     {
-        vert := read_entire_file("data/shaders/textured_quad.vert");
-        frag := read_entire_file("data/shaders/textured_quad.frag");
-        untext_frag := read_entire_file("data/shaders/untextured_quad.frag");
+        vert, ok1 := read_entire_file("data/shaders/textured_quad.vert");
+        frag, ok2 := read_entire_file("data/shaders/textured_quad.frag");
+        untext_frag, ok3 := read_entire_file("data/shaders/untextured_quad.frag");
+        unlit_frag, ok4 := read_entire_file("data/shaders/unlit.frag");
+        simple_vert, ok5 := read_entire_file("data/shaders/simple.vert");
+
+        assert(ok1);
+        assert(ok2);
+        assert(ok3);
+        assert(ok4);
+        assert(ok5);
         
         defer free(vert);
         defer free(frag);
         defer free(untext_frag);
+        defer free(unlit_frag);
+        defer free(simple_vert);
         
         game.textured_quad_shader = compile_shader_source(vert, frag);
         game.untextured_quad_shader = compile_shader_source(vert, untext_frag);
+        game.unlit_shader = compile_shader_source(simple_vert, unlit_frag);
     }
 
     bytes_loaded: s64;
@@ -1429,7 +1463,8 @@ show_inspector: bool;
 new_imgui_frame :: (window: *void) {
     ImGui_Impl_NewFrame(window, game.window_width, game.window_height);
     if show_inspector {
-        inspect("settings", *game.settings);
+        //inspect("settings", *game.settings);
+        inspect("core", *game.core);
     }
 }
 }
@@ -1447,7 +1482,7 @@ main :: () {
     DEFAULT_WIN_WIDTH :: 1280;
     DEFAULT_WIN_HEIGHT :: 720;
 
-    window := create_window(DEFAULT_WIN_WIDTH, DEFAULT_WIN_HEIGHT, "Shooter");
+    window := create_window(DEFAULT_WIN_WIDTH, DEFAULT_WIN_HEIGHT, "nes WAT");
     window_handle = xx window;
     gl_create_context(window, 3, 2);
     gl_load(*gl);
@@ -1526,9 +1561,7 @@ main :: () {
         update_window_events();
         update_gamepad();
         reset_temporary_storage();
-        
         if game.quit break;
-        
         if do_frame(window) swap_buffers(window);
     }
 
