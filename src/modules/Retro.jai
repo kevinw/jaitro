@@ -141,10 +141,49 @@ Log_Callback :: struct {
 };
 
 // core function callback types
-Environment :: #type (cmd: Environment_Command, data: *void) -> bool #c_call;
-Video_Refresh :: #type (data: *void, width: u32, height: u32, pitch: int) #c_call;
-Input_Poll :: #type () #c_call;
-Input_State :: #type (port: u32, device: Device, index: u32, id: u32) -> s16 #c_call;
+
+/* Environment callback. Gives implementations a way of performing
+ * uncommon tasks. Extensible. */
+Environment        :: #type (cmd: Environment_Command, data: *void) -> bool #c_call;
+
+/* Polls input. */
+Input_Poll         :: #type () #c_call;
+
+/* Queries for input for player 'port'. device will be masked with
+ * RETRO_DEVICE_MASK.
+ *
+ * Specialization of devices such as RETRO_DEVICE_JOYPAD_MULTITAP that
+ * have been set with retro_set_controller_port_device()
+ * will still use the higher level RETRO_DEVICE_JOYPAD to request input.
+ */
+Input_State        :: #type (port: u32, device: Device, index: u32, id: u32) -> s16 #c_call;
+
+/* Render a frame. Pixel format is 15-bit 0RGB1555 native endian
+ * unless changed (see RETRO_ENVIRONMENT_SET_PIXEL_FORMAT).
+ *
+ * Width and height specify dimensions of buffer.
+ * Pitch specifices length in bytes between two lines in buffer.
+ *
+ * For performance reasons, it is highly recommended to have a frame
+ * that is packed in memory, i.e. pitch == width * byte_per_pixel.
+ * Certain graphic APIs, such as OpenGL ES, do not like textures
+ * that are not packed in memory.
+ */
+Video_Refresh      :: #type (data: *void, width: u32, height: u32, pitch: int) #c_call;
+
+/* Renders a single audio frame. Should only be used if implementation
+ * generates a single sample at a time.
+ * Format is signed 16-bit native endian.
+ */
+Audio_Sample       :: #type (left: s16, right: s16) #c_call;
+
+/* Renders multiple audio frames in one go.
+ *
+ * One frame is defined as a sample of left and right channels, interleaved.
+ * I.e. int16_t buf[4] = { l, r, l, r }; would be 2 frames.
+ * Only one of the audio callbacks must ever be used.
+ */
+Audio_Sample_Batch :: #type (data: *s16, frames: int) -> int #c_call;
 
 RETRO_ENVIRONMENT_EXPERIMENTAL :: 0x10000;
 
@@ -1083,21 +1122,22 @@ Controller_Info :: struct {
 Core :: struct {
 	handle: *void;
 
-    init               : () #foreign;
-    deinit             : () #foreign;
-    api_version        : () -> u32 #foreign;
-    get_system_info    : (info: *System_Info) #foreign;
-	get_system_av_info : (info: *System_AV_Info) #foreign;
+    init               : () #c_call;
+    deinit             : () #c_call;
+    api_version        : () -> u32 #c_call;
+    get_system_info    : (info: *System_Info) #c_call;
+	get_system_av_info : (info: *System_AV_Info) #c_call;
 
-    load_game          : (game_info: *Game_Info) -> bool #foreign;
-    run                : () #foreign;
-/*
-	void (*retro_set_controller_port_device)(unsigned port, unsigned device);
+    load_game          : (game_info: *Game_Info) -> bool #c_call;
+    run                : () #c_call;
+
+    serialize_size     : () -> int #c_call;
+    serialize          : (data: *void, size: int) -> bool #c_call;
+    unserialize        : (data: *void, size: int) -> bool #c_call;
+
+/* void (*retro_set_controller_port_device)(unsigned port, unsigned device);
 	void (*retro_reset)(void);
 	void (*retro_run)(void);
-//	size_t retro_serialize_size(void);
-//	bool retro_serialize(void *data, size_t size);
-//	bool retro_unserialize(const void *data, size_t size);
 //	void retro_cheat_reset(void);
 //	void retro_cheat_set(unsigned index, bool enabled, const char *code);
 //	bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info);
@@ -1131,6 +1171,10 @@ load_core_funcs :: (core: *Core, filename: string) -> success: bool {
     core.get_system_info    = load_and_check_sym(library, "retro_get_system_info");
     core.get_system_av_info = load_and_check_sym(library, "retro_get_system_av_info");
     core.run                = load_and_check_sym(library, "retro_run");
+
+    core.serialize_size     = load_and_check_sym(library, "retro_serialize_size");
+    core.serialize          = load_and_check_sym(library, "retro_serialize");
+    core.unserialize        = load_and_check_sym(library, "retro_unserialize");
 
     return true;
 }

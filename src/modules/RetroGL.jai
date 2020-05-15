@@ -28,18 +28,20 @@ make_keymap :: (k: Key_Code, rk: u32) -> Keymap {
 GL_Core :: struct {
     using core: Core;
 
-	tex_id: GLuint;
-	pitch: GLuint;
-	tex_w: GLint;
-    tex_h: GLint;
-	clip_w: GLuint;
-    clip_h: GLuint;
+    video: struct {
+        tex_id: GLuint;
+        pitch: GLuint;
+        tex_w: GLint;
+        tex_h: GLint;
+        clip_w: GLuint;
+        clip_h: GLuint;
 
-	pixfmt: GLuint;
-	pixtype: GLuint;
-	bpp: GLuint;
+        pixfmt: GLuint;
+        pixtype: GLuint;
+        bpp: GLuint;
 
-    window_width, window_height: s32;
+        window_width, window_height: s32;
+    };
 
     joy: [DEVICE_ID_JOYPAD_R3 + 1]s16;
     binds: [11]Keymap;
@@ -82,14 +84,23 @@ core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
             print("! GET_VARIABLE %: %\n", to_string(var.key), var.value);
         case .SET_CONTROLLER_INFO;
             info := cast(*Controller_Info)data;
-            print("---controllers:\n");
+            //print("---controllers:\n");
             for i: 0..info.num_types-1 {
                 controller_desc := info.types[i];
-                print("  %, id=%\n", to_string(controller_desc.desc), controller_desc.id); 
+                //print("  %, id=%\n", to_string(controller_desc.desc), controller_desc.id); 
             }
         case .SET_GEOMETRY;
             geo := << cast(*Game_Geometry)data;
             print("TODO: handle SET_GEOMETRY %\n", geo);
+        case .GET_AUDIO_VIDEO_ENABLE;
+            <<(cast(*s32)data) = 0
+                | (1 << 0) // enable video
+                | (1 << 1) // enable audio
+             // | (1 << 2) // use fast savestates
+             // | (1 << 3) // hard disable audio
+             ;
+
+
 
         case;
             print("Unhandled env %\n", cmd);
@@ -101,22 +112,25 @@ core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
 }
 
 video_set_pixel_format :: (format: Pixel_Format) -> bool {
-	if g_video.tex_id != 0
+    assert(g_video != null);
+    using g_video;
+
+	if video.tex_id != 0
 		panic("Tried to change pixel format after initialization.");
 
 	if format == {
 	case Pixel_Format._0RGB1555;
-		g_video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
-		g_video.pixtype = GL_BGRA;
-		g_video.bpp = size_of(u16);
+		video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
+		video.pixtype = GL_BGRA;
+		video.bpp = size_of(u16);
 	case Pixel_Format.XRGB8888;
-		g_video.pixfmt = GL_UNSIGNED_INT_8_8_8_8_REV;
-		g_video.pixtype = GL_BGRA;
-		g_video.bpp = size_of(u32);
+		video.pixfmt = GL_UNSIGNED_INT_8_8_8_8_REV;
+		video.pixtype = GL_BGRA;
+		video.bpp = size_of(u32);
 	case Pixel_Format.RGB565;
-		g_video.pixfmt  = GL_UNSIGNED_SHORT_5_6_5;
-		g_video.pixtype = GL_RGB;
-		g_video.bpp = size_of(u16);
+		video.pixfmt  = GL_UNSIGNED_SHORT_5_6_5;
+		video.pixtype = GL_RGB;
+		video.bpp = size_of(u16);
 	case;
 		panic(tprint("Unknown pixel type %", format));
 	}
@@ -142,45 +156,24 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
     assert(g_video != null);
     }
 
-	if g_video.clip_w != width || g_video.clip_h != height {
-		g_video.clip_w = width;
-		g_video.clip_h = height;
-		refresh_vertex_data();
+    using g_video;
+
+	if video.clip_w != width || video.clip_h != height {
+		video.clip_w = width;
+		video.clip_h = height;
 	}
 
-	glBindTexture(GL_TEXTURE_2D, g_video.tex_id);
+	glBindTexture(GL_TEXTURE_2D, video.tex_id);
 
-	if pitch != g_video.pitch {
-		g_video.pitch = pitch;
-		glPixelStorei(GL_UNPACK_ROW_LENGTH, cast(s32)(g_video.pitch / g_video.bpp));
+	if pitch != video.pitch {
+		video.pitch = pitch;
+		glPixelStorei(GL_UNPACK_ROW_LENGTH, cast(s32)(video.pitch / video.bpp));
 	}
 
 	if data != null
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height,
-						g_video.pixtype, g_video.pixfmt, data);
+		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, video.pixtype, video.pixfmt, data);
 }
 
-refresh_vertex_data :: () #c_call {
-    /*
-    ctx: Context;
-    push_context ctx {
-        assert(g_video != null);
-
-        assert(g_video.tex_w != 0);
-        assert(g_video.tex_h != 0);
-        assert(g_video.clip_w != 0);
-        assert(g_video.clip_h != 0);
-
-        coords := g_texcoords.data;
-        a := cast(float)g_video.clip_h / g_video.tex_h;
-        b := cast(float)g_video.clip_w / g_video.tex_w;
-        coords[1] = a; coords[5] = a;
-        coords[4] = b; coords[6] = b;
-
-        print("TODO: refresh_vertex_data wants to do uv stuff\n");
-    }
-    */
-}
 core_video_refresh :: (data: *void, width: u32, height: u32, pitch: int) #c_call {
     ctx: Context;
     push_context ctx {
@@ -209,8 +202,9 @@ resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
 
 
 video_configure :: (geom: *Game_Geometry) {
-    print("video_configure with %\n", << geom);
+    //print("video_configure with %\n", << geom);
     assert(g_video != null);
+    using g_video;
     assert(glGetError() == GL_NO_ERROR);
 	nwidth: s32;
     nheight: s32;
@@ -221,60 +215,27 @@ video_configure :: (geom: *Game_Geometry) {
 	nwidth = cast(s32)(nwidth * g_scale);
 	nheight = cast(s32)(nheight * g_scale);
 
-    g_video.window_width = nwidth;
-    g_video.window_height = nheight;
-    /*
+    video.window_width = nwidth;
+    video.window_height = nheight;
 
-	if !g_win {
-        g_win := create_window(nwidth, nheight, "jairetro");
-        gl_create_context(g_win, 3, 2);
-        gl_load(*gl);
+	if (video.tex_id)
+		glDeleteTextures(1, *video.tex_id);
 
-        debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
-            pctx := cast(*Context) userParam;
-            ctx := <<pctx;
-            push_context ctx {
-                #if OS_WINDOWS {
-                    if type == GL_DEBUG_TYPE_ERROR print("GL Error:%\n", to_string(message));
-                }
-            }
-        }
+	video.tex_id = 0;
 
-        if GL_VERSION_4_3 {
-            glDebugMessageCallback(debug_callback, *context);
-            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-        } else if GL_ARB_debug_output {
-            glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
-            glDebugMessageCallbackARB(debug_callback, *context);
-        }
-
-        vao: u32;
-        glGenVertexArrays(1, *vao);
-        glBindVertexArray(vao);
-
-        glEnable(GL_TEXTURE_2D);
-        on_window_resized(g_win, cast(u32)nwidth, cast(u32)nheight);
-    }
-    */
-
-	if (g_video.tex_id)
-		glDeleteTextures(1, *g_video.tex_id);
-
-	g_video.tex_id = 0;
-
-	if (!g_video.pixfmt)
-		g_video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
+	if (!video.pixfmt)
+		video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
 
     assert(glGetError() == GL_NO_ERROR);
-	glGenTextures(1, *g_video.tex_id);
+	glGenTextures(1, *video.tex_id);
     assert(glGetError() == GL_NO_ERROR);
 
-	if !g_video.tex_id
+	if !video.tex_id
 		panic("Failed to create the video texture");
 
-	g_video.pitch = geom.base_width * g_video.bpp;
+	video.pitch = geom.base_width * video.bpp;
 
-	glBindTexture(GL_TEXTURE_2D, g_video.tex_id);
+	glBindTexture(GL_TEXTURE_2D, video.tex_id);
 
 //	glPixelStorei(GL_UNPACK_ALIGNMENT, s_video.pixfmt == GL_UNSIGNED_INT_8_8_8_8_REV ? 4 : 2);
 //	glPixelStorei(GL_UNPACK_ROW_LENGTH, s_video.pitch / s_video.bpp);
@@ -282,35 +243,34 @@ video_configure :: (geom: *Game_Geometry) {
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
 
-    print("tex image created with max_width % and max_height %\n", geom.max_width, geom.max_height);
-    print("clip_w/h is % %\n", geom.base_width, geom.base_height);
+    //print("tex image created with max_width % and max_height %\n", geom.max_width, geom.max_height);
+    //print("clip_w/h is % %\n", geom.base_width, geom.base_height);
 
 	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, geom.max_width, geom.max_height, 0,
-			g_video.pixtype, g_video.pixfmt, null);
+			video.pixtype, video.pixfmt, null);
 
 	glBindTexture(GL_TEXTURE_2D, 0);
 
-	g_video.tex_w = cast(s32)geom.max_width;
-	g_video.tex_h = cast(s32)geom.max_height;
-	g_video.clip_w = geom.base_width;
-	g_video.clip_h = geom.base_height;
-
-	refresh_vertex_data();
+	video.tex_w = cast(s32)geom.max_width;
+	video.tex_h = cast(s32)geom.max_height;
+	video.clip_w = geom.base_width;
+	video.clip_h = geom.base_height;
 }
 
 get_video_texture :: (core: *GL_Core) -> u32 {
-    return core.tex_id;
+    return core.video.tex_id;
 }
 
 get_video_texture_uv :: (core: *GL_Core) -> Vector2 {
-    return make_vector2(
-        cast(float)core.clip_w / core.tex_w,
-        cast(float)core.clip_h / core.tex_h,
-    );
+    assert(core != null);
+    using core.video;
+    return make_vector2(cast(float)clip_w / tex_w, cast(float)clip_h / tex_h);
 }
 
 get_video_texture_aspect :: (core: *GL_Core) -> float {
-    return cast(float)core.clip_w / core.clip_h;
+    assert(core != null);
+    using core.video;
+    return cast(float)clip_w / clip_h;
 }
 
 load_core :: (core: *GL_Core, filename: string) -> success: bool {
@@ -320,20 +280,23 @@ load_core :: (core: *GL_Core, filename: string) -> success: bool {
     if !load_core_funcs(core, filename)
         return false;
 
-    set_environment: (Environment) #foreign        = load_and_check_sym(core.handle, "retro_set_environment");
-    set_video_refresh: (Video_Refresh) #foreign    = load_and_check_sym(core.handle, "retro_set_video_refresh");
-	set_input_poll: (Input_Poll) #foreign          = load_and_check_sym(core.handle, "retro_set_input_poll");
-	set_input_state: (Input_State) #foreign        = load_and_check_sym(core.handle, "retro_set_input_state");
+    set_environment: (Environment) #foreign               = load_and_check_sym(core.handle, "retro_set_environment");
+    set_video_refresh: (Video_Refresh) #foreign           = load_and_check_sym(core.handle, "retro_set_video_refresh");
+	set_input_poll: (Input_Poll) #foreign                 = load_and_check_sym(core.handle, "retro_set_input_poll");
+	set_input_state: (Input_State) #foreign               = load_and_check_sym(core.handle, "retro_set_input_state");
+    set_audio_sample: (Audio_Sample) #foreign             = load_and_check_sym(core.handle, "retro_set_audio_sample");
+    set_audio_sample_batch: (Audio_Sample_Batch) #foreign = load_and_check_sym(core.handle, "retro_set_audio_sample_batch");
 
-    print("api_version: %\n", core.api_version());
+    //print("libretro_api_version: %\n", core.api_version());
 
     set_environment(core_environment);
     core.init();
     set_video_refresh(core_video_refresh);
     set_input_poll(core_input_poll);
     set_input_state(core_input_state);
+    set_audio_sample(core_audio_sample);
+    set_audio_sample_batch(core_audio_sample_batch);
 
-    print("core % loaded.\n", filename);
     return true;
 }
 
@@ -360,8 +323,6 @@ load_game :: (core: *GL_Core, filename: string) -> success: bool {
         core.binds[7]  = make_keymap(Key_Code.ARROW_RIGHT, DEVICE_ID_JOYPAD_RIGHT);
         core.binds[8]  = make_keymap(Key_Code.ENTER, DEVICE_ID_JOYPAD_START);
         core.binds[9]  = make_keymap(Key_Code.BACKSPACE, DEVICE_ID_JOYPAD_SELECT);
-        core.binds[10] = make_keymap(0, 0);
-        print("%\n", core.binds);
     }
 
     modtime, size, success := File_Utilities.file_modtime_and_size(filename);
@@ -433,15 +394,13 @@ core_log :: (level: Log_Level, fmt: *u8, args:..*void) #c_call {
 core_input_poll :: () #c_call {
     using g_video;
 
-    i := 0;
-    while binds[i].k != 0 && binds[i].rk != 0 {
-        button_state := Input.input_button_states[binds[i].k];
+    for binds {
+        button_state := Input.input_button_states[it.k];
         is_down_right_now := button_state & Input.Key_Current_State.DOWN;
         if is_down_right_now
-            joy[binds[i].rk] = 1;
+            joy[it.rk] = 1;
         else
-            joy[binds[i].rk] = 0;
-        i += 1;
+            joy[it.rk] = 0;
     }
 }
 
@@ -451,11 +410,20 @@ core_input_state :: (port: u32, device: Device, index: u32, id: u32) -> s16 #c_c
 	if port || index || device != .JOYPAD {
 		return 0;
     }
+
+    if id >= joy.count return 0;
     
     res := joy[id];
-    if res != 0 {
-        ctx: Context;
-        push_context ctx { print("res for %: %\n", id, res); }
-    }
     return res;
+}
+
+core_audio_sample :: (left: s16, right: s16) #c_call {
+	//int16_t buf[2] = {left, right};
+	//audio_write(buf, 1);
+}
+
+
+core_audio_sample_batch :: (data: *s16, frames: int) -> int #c_call {
+	//return audio_write(data, frames);
+    return frames;
 }

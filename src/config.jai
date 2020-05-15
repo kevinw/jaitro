@@ -34,6 +34,7 @@ parse_config_file :: (target: $T, config_filename: string) {
 
     for line: *handler {
         key_name, rhs := break_by_spaces(line);
+        print("CONFIG %: '%'\n", key_name, rhs);
         if !rhs {
             error(handler, "Expected a space after the key\n");
             continue;
@@ -50,6 +51,17 @@ parse_config_file :: (target: $T, config_filename: string) {
         any: Any;
         any.value_pointer = (cast(*u8)target) + member.offset_in_bytes;
         any.type = member.type;
-        set_value_from_string(any, rhs);
+
+        if any.type == type_info(string) {
+            // @Leak - if we're setting a string, we
+            // can't just return a slice of the data, since it will be freed
+            // when we're done config parsing
+            rhs = copy_string(rhs);
+        }
+
+        if !set_value_from_string(any, rhs) {
+            error(handler, "Error setting value '%' from config value '%'\n", key_name, rhs);
+            continue;
+        }
     }
 }

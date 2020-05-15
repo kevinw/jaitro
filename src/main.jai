@@ -115,6 +115,9 @@ game: struct {
     static: [..]AABB;
 
     settings: struct {
+        core := "data/cores/nes/quicknes_libretro.dll";
+        rom  := "data/roms/nes/Legend of Zelda, The (U) (PRG1) [!].nes" ;
+
         mute_all_sounds: bool;
         enemy: struct {
             size := 0.45;
@@ -757,11 +760,12 @@ render :: () {
         screen_aspect := cast(float) game.window_width / cast(float) game.window_height;
         W /= screen_aspect;
 
-        draw_unlit_2(
-            make_Quad(-W*0.5, -H*0.5, W, H),
-            tex,
-            RetroGL.get_video_texture(*game.core),
-            flip_y=true);
+        if 1 
+            draw_unlit_2(
+                make_Quad(-W*0.5, -H*0.5, W, H),
+                tex,
+                RetroGL.get_video_texture(*game.core),
+                flip_y=true);
     }
 
     if game.mode == .MENU then render_menu();
@@ -1021,8 +1025,12 @@ update :: (dt: float) {
     }
     
     if #complete mode == {
-        case mode.GAME; update_game(dt * time_scale);
-        case mode.MENU; update_menu(dt);
+        case mode.GAME;
+            update_game(dt * time_scale);
+            RetroGL.advance_frame(*game.core);
+
+        case mode.MENU;
+            update_menu(dt);
     }
 
     // Update the screen shake regardless of game mode, otherwise
@@ -1198,7 +1206,7 @@ init_game :: () {
             print("Error: unable to find my own exe\n");
             return;
         }
-        parse_config_file(*game.settings, tprint("%/%", exe_path, "shooter.cfg"));
+        parse_config_file(*game.settings, tprint("%/%", exe_path, "jairetro.cfg"));
     }
 
     direction_vectors[Direction.UP]    = make_vector2(0, -1);
@@ -1330,8 +1338,18 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
             case Event_Type.KEYBOARD;
                 key_down := it.key_pressed != 0;
                 if it.key_code == {
+                    case Key_Code.F5;
+                        if key_down {
+                            print("save!\n");
+                            save_game();
+                        }
+                    case Key_Code.F9;
+                        if key_down {
+                            print("load\n");
+                            load_game();
+                        }
                     case Key_Code.F8;
-                        do_screenshot();
+                        if key_down do_screenshot();
 
                     case cast(Key_Code)(#char "P");
                         if key_down { if time_scale > 0 time_scale = 0; else time_scale = 1; }
@@ -1421,8 +1439,6 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
 
         assert(glGetError() == GL_NO_ERROR);
 
-        RetroGL.advance_frame(*game.core);
-
         game.down_pressed = false;
         game.up_pressed = false;
         game.left_pressed = false;
@@ -1488,10 +1504,11 @@ main :: () {
     gl_load(*gl);
     assert(glGetError() == GL_NO_ERROR);
 
-    core_name := "mesen_libretro.dll";
-    rom_name  := "Legend of Zelda, The (U) (PRG1) [!].nes";
-    if (!RetroGL.load_core(*game.core, core_name)) exit(1);
-    if (!RetroGL.load_game(*game.core, rom_name)) exit(1);
+    print("CORE: '%'\n", game.settings.core);
+    print("ROM:  '%'\n", game.settings.rom);
+
+    if (!RetroGL.load_core(*game.core, game.settings.core)) exit(1);
+    if (!RetroGL.load_game(*game.core, game.settings.rom)) exit(1);
     assert(glGetError() == GL_NO_ERROR);
 
     if GL_VERSION_4_3 {
@@ -1568,7 +1585,6 @@ main :: () {
     fini_game();
 }
 
-
 change_to_runtree_dir :: () {
     if running_at_compile_time() {
         set_working_directory(sprint("%1%2", #filepath, "../run_tree"));
@@ -1577,6 +1593,37 @@ change_to_runtree_dir :: () {
             set_working_directory(osx_get_bundle_resources_directory());
         } else {
             set_working_directory(path_strip_filename(get_path_of_running_executable()));
+        }
+    }
+}
+
+_saved_game: []u8;
+
+save_game :: () {
+    sz := game.core.serialize_size();
+    assert(sz > 0);
+    data := alloc(sz);
+    ok := game.core.serialize(data, sz);
+    if !ok {
+        Log.error();
+        Log.print("could not unserialize save game!\n");
+        return;
+    }
+
+    _saved_game.data = data;
+    _saved_game.count = sz;
+
+    s: string;
+    s.data = _saved_game.data;
+    s.count = _saved_game.count;
+}
+
+load_game :: () {
+    if _saved_game.data != null {
+        ok := game.core.unserialize(_saved_game.data, _saved_game.count);
+        if !ok {
+            Log.error();
+            Log.print("could not unserialize save game!\n");
         }
     }
 }

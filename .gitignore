@@ -3,3 +3,4 @@ run_tree/*.pdb
 .build/
 .vs/
 imgui.ini
+run_tree/data/**/*.nes
