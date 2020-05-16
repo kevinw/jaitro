@@ -30,10 +30,6 @@ RetroGL :: #import "RetroGL";
     #load "imgui_inspector.jai";
 }
 
-#if OS_MACOSX {
-    #load "macosx.jai"; // Cocoa app stuff/entry point
-}
-
 Menu_Selection :: enum s8 {
     CONTINUE_GAME :: 0;
     RESET_GAME :: 1;
@@ -43,19 +39,12 @@ Menu_Selection_MAX :: 2;
 
 FONT_HEIGHT :: 28;
 
-Core_State :: struct {
-    using core: RetroGL.GL_Core;
-
-    savestate_filename_to_load: string;
-}
-
 game: struct {
-    cores: [..]Core_State;
+    cores: [..]RetroGL.GL_Core;
 
     settings: struct {
         core := "data/cores/nes/quicknes_libretro.dll";
-        rom  := "data/roms/nes/Legend of Zelda, The (U) (PRG1) [!].nes" ;
-
+        rom  := "data/roms/nes/nes/assimilate_full_dl.nes";
         mute_all_sounds: bool;
     };
 
@@ -110,11 +99,6 @@ game: struct {
 
     fps_string: string;
 };
-
-ease_out_elastic :: (n: float) -> float {
-    p := 0.3;
-    return pow(2, -10*n) * sin((n-p/4.0) * TAU/p) + 1;
-}
 
 render_game :: () {
     glClearColor(0.0, 0.6, 0.1, 1.0);
@@ -250,7 +234,6 @@ render :: () {
     game.projection = orthographic_projection_matrix(0, 1, 0, 1, -1, 1);
 
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-    // draw_textured_quad(make_Quad(0, 0, 1, 1), game.game_framebuffer.color_texture);
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     fb := game.game_framebuffer;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, fb.id);
@@ -326,7 +309,7 @@ debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, l
             // print("severity: %\n", severity);
             // print("length: %\n", length);
             // print("message: %\n", message);
-            // print("userParam: %\n", userParam);
+            print("userParam: %\n", userParam);
             if type == GL_DEBUG_TYPE_ERROR print("GL Error:%\n", to_string(message));
         }
     }
@@ -397,9 +380,6 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
         width, height := record.width, record.height;
         game.window_width = width;
         game.window_height = height;
-
-        print("RESIZE width, height: % , %\n", width, height);
-
         fb_width, fb_height := get_framebuffer_dimensions(null);
         resize_buffer(*game.game_framebuffer, fb_width, fb_height);
     }
@@ -428,13 +408,11 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
                 if it.key_code == {
                     case Key_Code.F5;
                         if key_down {
-                            print("TODO: save!\n");
-                            //save_game();
+                            if game.cores.count > 0 save_game(*game.cores[0]);
                         }
                     case Key_Code.F9;
                         if key_down {
-                            print("TODO: load\n");
-                            //load_game();
+                            if game.cores.count > 0 load_game(*game.cores[0]);
                         }
                     case cast(Key_Code)(#char "`"); if key_down show_inspector = !show_inspector;
 
@@ -536,24 +514,16 @@ do_frame :: (window: Window_Type) -> did_render_frame: bool {
 
 show_inspector: bool;
 #if DEBUG_UI {
-new_imgui_frame :: (window: *void) {
-    ImGui_Impl_NewFrame(window, game.window_width, game.window_height);
-    if show_inspector {
-        //inspect("settings", *game.settings);
-
-        for * game.cores 
-            inspect("core", it);
+    new_imgui_frame :: (window: *void) {
+        ImGui_Impl_NewFrame(window, game.window_width, game.window_height);
+        if show_inspector
+            for * game.cores 
+                inspect("core", it);
     }
 }
-}
 
-Debug :: #import "Debug";
-
-// @Note see macosx.jai for the MacOSX entry point that uses Cocoa/AppKit's run loop.
 main :: () {
     change_to_runtree_dir();
-    Debug.init();
-
     init_game();
 
     DEFAULT_WIN_WIDTH :: 1280;
@@ -563,29 +533,6 @@ main :: () {
     gl_create_context(window, 3, 2);
     gl_load(*gl);
     assert(glGetError() == GL_NO_ERROR);
-
-    USE_CONFIG :: true;
-
-    if !USE_CONFIG {
-        mesen        :: "data/cores/nes/mesen_libretro.dll";
-        castlevania2 :: "data/roms/nes/Castlevania II - Simon's Quest.nes|data/roms/nes/Legend of Zelda, The (U) (PRG1) [!].nes";
-        zelda1       :: "data/roms/nes/Legend of Zelda, The (U) (PRG1) [!].nes";
-
-        load_new_core(mesen, castlevania2);
-        load_new_core(mesen, zelda1, "data/savestates/zelda1/first_screen.mst");
-    } else {
-        for rom_filename_short: split(game.settings.rom, "|") {
-            array_resize(*game.cores, game.cores.count + 1);
-            new_core := *game.cores[game.cores.count - 1];
-
-            core_filename := tprint("data/cores/%", game.settings.core);
-            rom_filename  := tprint("data/roms/%", rom_filename_short);
-
-            if (!RetroGL.load_core(new_core, core_filename)) exit(1);
-            if (!RetroGL.load_game(new_core, rom_filename)) exit(1);
-            assert(glGetError() == GL_NO_ERROR);
-        }
-    }
 
     if GL_VERSION_4_3 {
         glDebugMessageCallback(debug_callback, *context);
@@ -599,6 +546,19 @@ main :: () {
         ImGui_Impl_Init(window);
         ImGui.StyleColorsLight();
     }
+
+    for rom_filename_short: split(game.settings.rom, "|") {
+        array_resize(*game.cores, game.cores.count + 1);
+        new_core := *game.cores[game.cores.count - 1];
+
+        core_filename := tprint("data/cores/%", game.settings.core);
+        rom_filename  := tprint("data/roms/%", rom_filename_short);
+
+        if (!RetroGL.load_core(new_core, core_filename)) exit(1);
+        if (!RetroGL.load_game(new_core, rom_filename)) exit(1);
+        assert(glGetError() == GL_NO_ERROR);
+    }
+
 
     {
         using game;
@@ -708,8 +668,5 @@ load_new_core :: (
     if (!RetroGL.load_game(new_core, rom_filename))
         return false;
     
-    // will be loaded later.
-    new_core.savestate_filename_to_load = savestate_filename;
-
     return true;
 }

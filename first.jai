@@ -76,26 +76,6 @@ build :: (building_executable := true, build_release := false) -> Workspace {
             manifest_options.dpi_aware = false;
             Windows_Resources.add_manifest_to_executable(exe_name, manifest_options);
         }
-
-        #if OS_MACOSX {
-            success, exit_code, output, error := os_run_command("ibtool", "src/Main.storyboard", "--compile", "run_tree/Main.storyboardc");
-            if !success {
-                print("Could not run ibtool on Main.storyboard.");
-                exit(1);
-            } else {
-                if output || error then print("ibtool:\n%\n%\n", output, error);
-
-                free(output);
-                free(error);
-            }
-
-            app_bundle, resources_path := Bundler.create_app_bundle(GAME_NAME, tprint("%/%", opts.output_path, opts.output_executable_name), "run_tree/apple.png", "run_tree/data", false, write_plist=false);
-            copy_file("run_tree/Info.plist", tprint("%/Contents/Info.plist", app_bundle));
-
-            resource_output_path := tprint("%/%", resources_path, "Main.storyboardc");
-            make_directory_if_it_does_not_exist(resource_output_path);
-            copy_files_recursively("run_tree/Main.storyboardc", resource_output_path);
-        }
     }
     return w;
 }

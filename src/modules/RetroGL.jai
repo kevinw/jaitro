@@ -47,12 +47,12 @@ GL_Core :: struct {
     binds: [11]Keymap;
 };
 
-g_video: *GL_Core; // TODO: do we need this global, or is there a way to sneak userdata in through libretro calls?
+g_core: *GL_Core; // TODO: do we need this global, or is there a way to sneak userdata in through libretro calls?
 
 core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
     ctx: Context;
     push_context ctx {
-    assert(g_video != null);
+    assert(g_core != null);
 
     if cmd == {
         case .GET_LOG_INTERFACE;
@@ -76,12 +76,12 @@ core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
             var := cast(*Variable)data;
             while true {
                 if var.key == null && var.value == null break;
-                print("set variables predeclared: % %\n", to_string(var.key), to_string(var.value));
+                //print("set variables predeclared: % %\n", to_string(var.key), to_string(var.value));
                 var = var + 1;
             }
         case .GET_VARIABLE;
             var := cast(*Variable)data;
-            print("! GET_VARIABLE %: %\n", to_string(var.key), var.value);
+            //print("! GET_VARIABLE %: %\n", to_string(var.key), var.value);
         case .SET_CONTROLLER_INFO;
             info := cast(*Controller_Info)data;
             //print("---controllers:\n");
@@ -112,8 +112,8 @@ core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
 }
 
 video_set_pixel_format :: (format: Pixel_Format) -> bool {
-    assert(g_video != null);
-    using g_video;
+    assert(g_core != null);
+    using g_core;
 
 	if video.tex_id != 0
 		panic("Tried to change pixel format after initialization.");
@@ -153,10 +153,10 @@ video_set_pixel_format :: (format: Pixel_Format) -> bool {
 video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
     ctx: Context;
     push_context ctx {
-    assert(g_video != null);
+    assert(g_core != null);
     }
 
-    using g_video;
+    using g_core;
 
 	if video.clip_w != width || video.clip_h != height {
 		video.clip_w = width;
@@ -203,8 +203,8 @@ resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
 
 video_configure :: (geom: *Game_Geometry) {
     //print("video_configure with %\n", << geom);
-    assert(g_video != null);
-    using g_video;
+    assert(g_core != null);
+    using g_core;
     assert(glGetError() == GL_NO_ERROR);
 	nwidth: s32;
     nheight: s32;
@@ -274,8 +274,8 @@ get_video_texture_aspect :: (core: *GL_Core) -> float {
 }
 
 load_core :: (core: *GL_Core, filename: string) -> success: bool {
-    g_video = core;
-    defer g_video = null;
+    g_core = core;
+    defer g_core = null;
 
     if !load_core_funcs(core, filename)
         return false;
@@ -301,8 +301,8 @@ load_core :: (core: *GL_Core, filename: string) -> success: bool {
 }
 
 advance_frame :: (core: *GL_Core) {
-    g_video = core;
-    defer g_video = null;
+    g_core = core;
+    defer g_core = null;
 
     core.run();
 }
@@ -349,8 +349,8 @@ load_game :: (core: *GL_Core, filename: string) -> success: bool {
         info.data = data.data;
     }
 
-    g_video = core;
-    defer g_video = null;
+    g_core = core;
+    defer g_core = null;
 
     if !core.load_game(*info) {
         log_eprintln("The core failed to load the game.");
@@ -375,24 +375,10 @@ core_log :: (level: Log_Level, fmt: *u8, args:..*void) #c_call {
     push_context ctx {
     write_string(to_string(fmt));
     }
-    /*
-    levelstr := {:string: "dbg", "inf", "wrn", "err" };
-
-	if level == 0 return;
-
-    ctx: Context;
-    push_context ctx {
-        fmt_s := to_string(fmt);
-        print("[%] %\n", levelstr[level], tprint(fmt_s, ..args));
-        if level == .ERROR
-            exit(EXIT_FAILURE);
-    }
-    */
-
 }
 
 core_input_poll :: () #c_call {
-    using g_video;
+    using g_core;
 
     for binds {
         button_state := Input.input_button_states[it.k];
@@ -405,16 +391,12 @@ core_input_poll :: () #c_call {
 }
 
 core_input_state :: (port: u32, device: Device, index: u32, id: u32) -> s16 #c_call {
-    using g_video;
+    using g_core;
 
-	if port || index || device != .JOYPAD {
+	if port || index || device != .JOYPAD || id >= joy.count
 		return 0;
-    }
-
-    if id >= joy.count return 0;
     
-    res := joy[id];
-    return res;
+    return joy[id];
 }
 
 core_audio_sample :: (left: s16, right: s16) #c_call {
