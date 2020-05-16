@@ -20,7 +20,7 @@ Specify a path to a libretro core DLL. A path to the cores is prepended to your 
 rom "nes/assimilate_full_dl.nes|nes/mojon-twins--cheril-the-goddess.nes"
 ```
 
-Specify a path to one or more ROMs to load and play. A path to the ROMs is prepended to your configuration value, so for example the full path above becomes `data/roms/nes/assimilate_full_...`.
+Specify a path to one or more ROMs to load and play, separated by a `|` character. A path to the ROMs is prepended to your configuration value, so for example the full path above becomes `data/roms/nes/assimilate_full_...`.
 
 ## Controls
 
