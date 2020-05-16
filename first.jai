@@ -15,7 +15,7 @@
     Bundler :: #import "MacOS_Bundler";
 }
 
-GAME_NAME :: "Shooter";
+GAME_NAME :: "jaitro";
 
 BUILD_COCOA_APP :: true;
 
@@ -26,8 +26,6 @@ build :: (building_executable := true, build_release := false) -> Workspace {
     opts.output_type = Build_Output_Type.NO_OUTPUT;
     set_build_options(opts);
 
-    // set_optimization_level(*opts, 3, 3);
-    
     opts.output_type = Build_Output_Type.EXECUTABLE;
     opts.output_executable_name = GAME_NAME;
     opts.output_path = "run_tree/";
@@ -45,7 +43,7 @@ build :: (building_executable := true, build_release := false) -> Workspace {
 
     set_build_options(opts, w);
     add_build_file("src/main.jai", w);
-    add_build_string(sprint("GAME_NAME :: \"%\";", GAME_NAME), w); // I think this @Leaks ?
+    add_build_string(sprint("GAME_NAME :: \"%\";", GAME_NAME), w);
     
     if building_executable {
         // Wait for COMPLETE message so we know our executable is built
@@ -65,8 +63,6 @@ build :: (building_executable := true, build_release := false) -> Workspace {
             translate_path(exe_name, #char "\\");
             defer free(exe_name);
 
-            print("setting icon to %\n", exe_name);
-
             ico_data := Ico_File.create_ico_file_from_bitmap_filename("run_tree\\apple.png");
             defer free(ico_data);
             if !ico_data then print("Could not load image for icon: run_tree/apple.png\n");
@@ -80,42 +76,4 @@ build :: (building_executable := true, build_release := false) -> Workspace {
     return w;
 }
 
-make_directory_tree :: (_path: string) {
-    path := _path;
-    if path.count && path[path.count-1] == #char "/" {
-        path.count -= 1;
-    }
-
-    if path == "" return;
-    parent := path_strip_filename(path);
-    make_directory_tree(parent);
-    make_directory_if_it_does_not_exist(path);
-}
-
-copy_files_recursively :: (source: string, dest: string) {
-    paths: [2] string;
-    paths[0] = source;
-    paths[1] = dest;
-
-    visitor :: (info: *File_Visit_Info, paths: [2] string) {
-        relative_path := info.full_name;
-        advance(*relative_path, paths[0].count);
-        out_path := concatenate(paths[1], "/", relative_path);
-        make_directory_tree(path_strip_filename(out_path));
-        copy_file(info.full_name, out_path);
-    }
-
-    res := visit_files(paths[0], true, paths, visitor);
-    assert(res);
-}
-
-compile_and_run :: () {
-    w := build(false);
-    opts := get_build_options(w);
-    opts.output_type = Build_Output_Type.NO_OUTPUT;
-    set_build_options(opts, w);
-    add_build_string("#run main();", w);
-}
-
 #run build();
-// #run compile_and_run();
