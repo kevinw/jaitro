@@ -8,6 +8,7 @@ dynlib :: #import "Dyn_Lib";
 Log :: #import "Log";
 File_Utilities :: #import "File_Utilities";
 File :: #import "File";
+String :: #import "String";
 
 log_eprintln :: (msg: string, args: ..Any) {
     Log.error();
@@ -1134,10 +1135,9 @@ Core :: struct {
     serialize_size     : () -> int #c_call;
     serialize          : (data: *void, size: int) -> bool #c_call;
     unserialize        : (data: *void, size: int) -> bool #c_call;
+    reset              : () #c_call;
 
 /* void (*retro_set_controller_port_device)(unsigned port, unsigned device);
-	void (*retro_reset)(void);
-	void (*retro_run)(void);
 //	void retro_cheat_reset(void);
 //	void retro_cheat_set(unsigned index, bool enabled, const char *code);
 //	bool retro_load_game_special(unsigned game_type, const struct retro_game_info *info, size_t num_info);
@@ -1154,8 +1154,25 @@ load_and_check_sym :: (library: dynlib.Library, sym_name: *u8) -> *void {
     return sym;
 }
 
-load_core_funcs :: (core: *Core, filename: string) -> success: bool {
-    library := dynlib.load(filename);
+_core_count := 0;
+
+load_core_funcs :: (core: *Core, filename: string, copy_to_temp_dir := true) -> success: bool {
+   new_path := filename;
+   if copy_to_temp_dir {
+      path := "temp";
+      File.make_directory_if_it_does_not_exist(path);
+
+      filename_part := String.path_filename(filename);
+      _core_count += 1;
+      new_path = String.concatenate(path, "/", filename_part, tprint("%", _core_count));
+      print("% -> %\n", filename, new_path);
+      File.file_delete(new_path);
+      res := File_Utilities.copy_file(filename, new_path);
+      assert(res);
+   }
+
+
+    library := dynlib.load(new_path);
     if !library {
         log_eprintln("could not load core from file '%'", filename);
         return false;
@@ -1175,10 +1192,17 @@ load_core_funcs :: (core: *Core, filename: string) -> success: bool {
     core.serialize_size     = load_and_check_sym(library, "retro_serialize_size");
     core.serialize          = load_and_check_sym(library, "retro_serialize");
     core.unserialize        = load_and_check_sym(library, "retro_unserialize");
+    core.reset              = load_and_check_sym(library, "retro_reset");
 
     return true;
 }
 
 unload_core :: (core: *Core) {
     print("TODO: unload core\n");
+}
+
+reset :: (core: *Core) {
+   if core && core.reset {
+      core.reset();
+   }
 }

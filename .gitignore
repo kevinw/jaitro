@@ -1,5 +1,6 @@
 run_tree/*.exe
 run_tree/*.pdb
+run_tree/temp/
 .build/
 .vs/
 imgui.ini

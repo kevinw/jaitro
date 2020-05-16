@@ -58,59 +58,10 @@ Mesh :: struct {
     model_matrix._44 = 1;
 }
 
-buffer_mesh :: (using m: *Mesh) {
-    if is_dirty {
-        if !buffer_id glGenBuffers(1, *buffer_id);
-        
-        glBindBuffer(GL_ARRAY_BUFFER, buffer_id);
-        glBufferData(GL_ARRAY_BUFFER, size_of(type_of(vertices[0]))*vertices.count, vertices.data, GL_STATIC_DRAW);
-        is_dirty = false;
-    }
-}
-
-buffer_model :: (m: *Model) {
-    for m.meshes {
-        buffer_mesh(it);
-    }
-}
-
 ATTRIB_POSITION  :: 0;
 ATTRIB_TEXCOORDS :: 1;
 ATTRIB_COLOR     :: 2;
 ATTRIB_NORMAL    :: 3;
-
-render_mesh :: (m: *Mesh) {
-    shader := game.textured_quad_shader;
-    use_shader_and_update_matrices(shader, m.model_matrix);
-    apply_material(shader, m.material);
-
-    assert(m.is_dirty == false);
-    glBindBuffer(GL_ARRAY_BUFFER, m.buffer_id);
-    
-    glEnableVertexAttribArray(ATTRIB_POSITION);
-    glEnableVertexAttribArray(ATTRIB_TEXCOORDS);
-    glEnableVertexAttribArray(ATTRIB_NORMAL);
-    glVertexAttribPointer(ATTRIB_POSITION, 3, GL_FLOAT, false, size_of(type_of(m.vertices[0])), null);
-    glVertexAttribPointer(ATTRIB_TEXCOORDS, 2, GL_FLOAT, false, size_of(type_of(m.vertices[0])),cast(*void) (size_of(float)*3));
-    glVertexAttribPointer(ATTRIB_NORMAL, 3, GL_FLOAT, false, size_of(type_of(m.vertices[0])), cast(*void) (size_of(float)*5));
-    glVertexAttrib4f(ATTRIB_COLOR, 1.0, 1.0, 1.0, 1.0);
-    glDrawArrays(GL_TRIANGLES, 0, xx m.vertices.count);
-    
-    glDisableVertexAttribArray(ATTRIB_POSITION);
-    glDisableVertexAttribArray(ATTRIB_TEXCOORDS);
-    glDisableVertexAttribArray(ATTRIB_NORMAL);
-}
-
-Model :: struct {
-    meshes: [..] *Mesh;
-    tag: string;
-}
-
-
-deinit :: (using this: *Model) {
-    for meshes free(it);
-    array_reset(*meshes);
-}
 
 make_scale_matrix :: (v: Vector3) -> Matrix4 {
     m: Matrix4;
@@ -119,93 +70,6 @@ make_scale_matrix :: (v: Vector3) -> Matrix4 {
     m._33 = v.z;
     m._44 = 1;
     return m;
-}
-
-Sprite_Sheet :: struct {
-    map: *Texture;
-    
-    // in normalized texture coordinates
-    tile_width: float;
-    tile_height: float;
-}
-
-create_sprite_sheet_from_file :: (path: string, tile_width: s32, tile_height: s32) -> Sprite_Sheet {
-    map := New(Texture);
-    load_texture_from_file(map, path);
-    
-    ss: Sprite_Sheet;
-    ss.map = map;
-    ss.tile_width = cast(float) tile_width / cast(float) map.width;
-    ss.tile_height = cast(float) tile_height / cast(float) map.height;
-    
-    glBindTexture(GL_TEXTURE_2D, map.platform_specific.gl_handle);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glBindTexture(GL_TEXTURE_2D, 0);
-    return ss; 
-}
-
-
-Sprite :: struct {
-    sheet: *Sprite_Sheet;
-    
-    // tile index
-    current_x: s32;
-    current_y: s32;
-    animation_length: s32;
-    
-    // secnods
-    animation_time_step: float = 1.0;
-    animation_time_elapsed: float;
-    loop_animation := false;
-    loop_start: s32;
-    loop_end: s32;
-    
-    transform: Matrix4;
-    geom: Quad;
-    tex_coords: Quad;
-}
-
-create_sprite :: (sheet: *Sprite_Sheet, tile_x: s32, tile_y: s32) -> Sprite {
-    sp: Sprite;
-    sp.sheet = sheet;
-    sp.current_x = tile_x;
-    sp.current_y=  tile_y;
-    sp.transform = matrix4_identity();
-    sp.geom = make_Quad(0, 0, 1, 1);
-    sp.tex_coords = make_Quad(cast(float) tile_x * sheet.tile_width, cast(float) tile_y * sheet.tile_height,
-                              sheet.tile_width, sheet.tile_height);
-    return sp;
-}
-
-update_sprite :: (sp: *Sprite, tile_x: s32, tile_y: s32) {
-    sp.current_x = tile_x;
-    sp.current_y=  tile_y;
-    sheet := sp.sheet;
-    sp.tex_coords = make_Quad(cast(float) tile_x * sheet.tile_width, cast(float) tile_y * sheet.tile_height,
-                              sheet.tile_width, sheet.tile_height);
-}
-
-sprite_loop_animation :: (sp: *Sprite, start_x: s32, end_x: s32) {
-    sp.loop_animation = true;
-    sp.loop_start = start_x;
-    sp.loop_end = end_x;
-}
-
-update_sprite_animation :: (using sp: *Sprite, dt: float) {
-    animation_time_elapsed += dt;
-    while animation_time_elapsed >= animation_time_step {
-        animation_time_elapsed -= animation_time_step;
-        target_x := current_x + 1;
-        if loop_animation {
-            if target_x > loop_end {
-                target_x = loop_start;
-            }
-        } else if target_x >= animation_length {
-            target_x = current_x;
-        }
-        update_sprite(sp, target_x, current_y);
-    }
 }
 
 Quad :: struct {
@@ -257,84 +121,6 @@ make_Vertex :: (x: float, y: float, u: float, v: float) -> Vertex {
     return vtx;
 }
 
-render_sprite :: (sp: *Sprite) {
-    shader := game.textured_quad_shader;
-    use_shader_and_update_matrices(shader, sp.transform);
-    
-    glEnable(GL_BLEND);
-    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    defer glDisable(GL_BLEND);
-
-    apply_material(shader, null);
-
-    glBindTexture(GL_TEXTURE_2D, sp.sheet.map.platform_specific.gl_handle);
-
-    uni_texture := glGetUniformLocation(shader, "the_material.diffuse_texture");
-    glUniform1i(uni_texture, 0);
-    use_texture := glGetUniformLocation(shader, "the_material.enable_diffuse_texture");
-    glUniform1i(use_texture, 1);
-    
-    q := *sp.geom;
-    tex := *sp.tex_coords;
-    
-    V :: make_Vertex;
-    
-    v0 := V(q.x0, q.y0, tex.x0, tex.y0);
-    v1 := V(q.x1, q.y0, tex.x1, tex.y0);
-    v2 := V(q.x1, q.y1, tex.x1, tex.y1);
-    v3 := V(q.x0, q.y1, tex.x0, tex.y1);
-    
-    vertices: [6] Vertex;
-    slice: [] Vertex = vertices;
-    set_quad(slice, v0, v1, v2, v3);
-    
-    glBindBuffer(GL_ARRAY_BUFFER, game.immediate_draw_buffer_id);
-    glBufferData(GL_ARRAY_BUFFER, size_of(Vertex)*vertices.count, vertices.data, GL_DYNAMIC_DRAW);
-    
-    glEnableVertexAttribArray(0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(ATTRIB_POSITION, 2, GL_FLOAT, false, size_of(Vertex), null);
-    glVertexAttribPointer(ATTRIB_TEXCOORDS, 2, GL_FLOAT, false, size_of(Vertex), cast(*void) (size_of(float)*2));
-    glVertexAttrib4f(ATTRIB_COLOR, 1.0, 1.0, 1.0, 1.0);
-    glVertexAttrib3f(ATTRIB_NORMAL, 0, 0, 0);
-    glDrawArrays(GL_TRIANGLES, 0, 6);
-    
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-}
-
-draw_line :: (coords: Quad, color: Vector4) {
-    shader := game.untextured_quad_shader;
-
-    // rotate this so that the XY coordinates are in the XZ plane.
-    // This routine is @Temporary anyways since we want to stylize
-    // the floor grid anyways.
-    quat: Quaternion;
-    set_from_axis_and_angle(*quat, 1.0, 0.0, 0.0, PI/2);
-    rot := make_rotation_matrix4(quat);
-    use_shader_and_update_matrices(shader, rot);
-    apply_material(shader, null);
-    
-    q := coords;
-    tex := coords; // @Hack because I'm too lazy to remove the tex.* stuff
-    
-    V :: make_Vertex;
-    
-    vertices: [2] Vertex;
-    vertices[0] = V(q.x0, q.y0, tex.x0, tex.y0);
-    vertices[1] = V(q.x1, q.y1, tex.x1, tex.y0);
-
-    glBindBuffer(GL_ARRAY_BUFFER, game.immediate_draw_buffer_id);
-    glBufferData(GL_ARRAY_BUFFER, size_of(Vertex)*vertices.count, vertices.data, GL_DYNAMIC_DRAW);
-    
-    glEnableVertexAttribArray(0);
-    glVertexAttribPointer(ATTRIB_POSITION, 2, GL_FLOAT, false, size_of(Vertex), null);
-    glVertexAttrib4f(ATTRIB_COLOR, color.x, color.y, color.z, color.w);
-    glVertexAttrib3f(ATTRIB_NORMAL, 0, 0, 0);
-    glDrawArrays(GL_LINES, 0, 2);
-    
-    glDisableVertexAttribArray(0);
-}
 
 draw_quad :: (q: Quad, color: Vector4) {
     shader := game.untextured_quad_shader;
@@ -366,7 +152,7 @@ draw_quad :: (q: Quad, color: Vector4) {
     glDrawArrays(GL_TRIANGLES, 0, xx vertices.count);
 }
 
-draw_unlit_2 :: (q: Quad, tex: Quad, texture: u32, flip_y: bool = false) {
+draw_unlit_quad :: (q: Quad, tex: Quad, texture: u32) {
     shader := game.unlit_shader;
     glUseProgram(shader);
 
@@ -561,7 +347,7 @@ use_shader_and_update_matrices :: (shader: GLuint, model: Matrix4) {
         }
     }
 
-    position := game.settings.camera.pos;
+    position := make_vector3(0, 0, 0);
     glUniform3f(uniloc(shader, "camera.position"), position.x, position.y, position.z);
     glUniform1i(uniloc(shader, "num_lights"), cast(s32) num_lights);
 }
