@@ -6,6 +6,10 @@ A minimal libretro frontend with support for multiple cores running simulatanous
 
 Thank you to [nanoarch](https://github.com/heuripedes/nanoarch) for providing an education resource on how to make a libretro frontend.
 
+## Running
+
+Run `run_tree\jaitro.exe`.
+
 ## Configuration
 
 Use `run_tree/jaitro.cfg` to these change configuration values:
