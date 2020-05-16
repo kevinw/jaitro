@@ -1,1 +1,1 @@
-@jai -x64 first.jai && run_tree\Shooter.exe
+@jai -x64 first.jai && run_tree\jaitro.exe
