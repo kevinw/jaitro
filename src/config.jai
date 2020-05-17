@@ -2,23 +2,10 @@
 #import "Reflection";
 Log :: #import "Log";
 
-for_expansion :: (handler: *Text_File_Handler, body: Code, pointer: bool, reverse: bool) #expand {
-    #assert(!pointer && !reverse);
-
-    while true {
-        line, found := consume_next_line(handler);
-        if !found break;
-
-        `it := line;
-        #insert body;
-    }
-}
-
-
 //
 // parse a config file and write values from it into the `target` struct
 //
-parse_config_file :: (target: $T, config_filename: string) {
+parse_config_file :: (target: *$T, config_filename: string) {
     handler: Text_File_Handler;
     defer deinit(*handler);
 
@@ -30,11 +17,13 @@ parse_config_file :: (target: $T, config_filename: string) {
     }
 
     // TODO: recurse into sub-structs with "." or something?
-    target_tinfo := type_info(type_of(<< target));
+    target_tinfo := type_info(T);
 
-    for line: *handler {
+    while true {
+        line, found := consume_next_line(*handler);
+        if !found break;
+
         key_name, rhs := break_by_spaces(line);
-        print("CONFIG %: '%'\n", key_name, rhs);
         if !rhs {
             error(handler, "Expected a space after the key\n");
             continue;
