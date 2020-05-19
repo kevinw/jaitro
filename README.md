@@ -4,7 +4,7 @@ A minimal libretro frontend with support for multiple cores running simulatanous
 
 ![A screenshot showing two homebrew ROMs running.](doc/screenshot1.jpg)
 
-Thank you to [nanoarch](https://github.com/heuripedes/nanoarch) for providing an education resource on how to make a libretro frontend.
+Thank you to [nanoarch](https://github.com/heuripedes/nanoarch) for providing an educational resource on how to make a libretro frontend.
 
 ## Running
 
