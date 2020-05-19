@@ -8,6 +8,7 @@ Input :: #import "Input";
 #import "String";
 #import "System";
 #import "Math";
+saudio :: #import "Sokol_Audio";
 
 #import "Retro";
 
@@ -27,6 +28,11 @@ make_keymap :: (k: Key_Code, rk: u32) -> Keymap {
 
 GL_Core :: struct {
     using core: Core;
+
+    audio: struct {
+        mute: bool = false;
+        did_init_with_sample_rate: float64 = -1;
+    };
 
     video: struct {
         tex_id: GLuint;
@@ -359,8 +365,28 @@ load_game :: (core: *GL_Core, filename: string) -> success: bool {
 
     av: System_AV_Info;
     core.get_system_av_info(*av);
+
+    // setup video
     video_configure(*av.geometry);
-    //audio_init(av.timing.sample_rate);
+
+    // setup audio
+    if !core.audio.mute && av.timing.sample_rate != core.audio.did_init_with_sample_rate {
+        if core.audio.did_init_with_sample_rate != -1 {
+            print("AUDIO shutting down\n");
+            saudio.shutdown();
+        }
+
+        saudio_desc: saudio.Desc;
+        saudio_desc.num_channels = 2;
+        saudio_desc.sample_rate = cast(s32)av.timing.sample_rate;
+
+        print("initing audio with sample rate % and % channels\n", saudio_desc.sample_rate, saudio_desc.num_channels);
+        saudio.setup(*saudio_desc);
+
+        assert(saudio.isvalid()); // TODO: don't hard crash if we don't have a sound card....
+
+        core.audio.did_init_with_sample_rate = av.timing.sample_rate;
+    }
 
     return true;
 }
@@ -402,10 +428,27 @@ core_input_state :: (port: u32, device: Device, index: u32, id: u32) -> s16 #c_c
 core_audio_sample :: (left: s16, right: s16) #c_call {
 	//int16_t buf[2] = {left, right};
 	//audio_write(buf, 1);
+
+    ctx: Context;
+    push_context ctx {
+        assert(false, "TODO: implement single sample version of libretro audio");
+    }
 }
 
+flt_buf: [4096]float;
 
 core_audio_sample_batch :: (data: *s16, frames: int) -> int #c_call {
-	//return audio_write(data, frames);
+    // One frame is defined as a sample of left and right channels, interleaved.
+    // I.e. int16_t buf[4] = { l, r, l, r }; would be 2 frames.
+
+    if !g_core.audio.mute {
+        S16_MAX :: 32767;
+        for i: 0..frames*2 {
+            flt_buf[i] = cast(float)data[i] / cast(float)S16_MAX;
+        }
+        
+        saudio.push(flt_buf.data, cast(s32)frames);
+    }
+
     return frames;
 }

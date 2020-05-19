@@ -163,24 +163,21 @@ render_menu :: () {
 
     base := game.window_height - 330 + 64;
 
-    using Menu_Selection;
-
-
     {
         color := white;
-        if game.menu_selection == CONTINUE_GAME then color = yellow;
+        if game.menu_selection == .CONTINUE_GAME then color = yellow;
         draw_text_centered(color, xx base, "Continue");
     }
     base -= 64;
     {
         color := white;
-        if game.menu_selection == RESET_GAME then color = yellow;
+        if game.menu_selection == .RESET_GAME then color = yellow;
         draw_text_centered(color, base, "Reset Game");
     }
     base -= 64;
     {
         color := white;
-        if game.menu_selection == QUIT then color = yellow;
+        if game.menu_selection == .QUIT then color = yellow;
         draw_text_centered(color, base, "Quit");
     }
 }
@@ -258,11 +255,10 @@ update_menu :: (dt: float) {
         menu_selection += cast(Menu_Selection)1;
 
     if enter_pressed {
-        using Menu_Selection;
         if #complete menu_selection == {
-            case CONTINUE_GAME; mode = mode.GAME;
-            case RESET_GAME; reset_game();
-            case QUIT; game.quit = true;
+            case .CONTINUE_GAME; mode = .GAME;
+            case .RESET_GAME; reset_game();
+            case .QUIT; game.quit = true;
         }
     }
 }
@@ -287,7 +283,7 @@ reset_game :: () {
 
     using game;
     
-    mode = game.mode.GAME;
+    mode = .GAME;
 
     down_pressed = false;
     up_pressed = false;
@@ -295,7 +291,7 @@ reset_game :: () {
     right_pressed = false;
     enter_pressed = false;
 
-    menu_selection = Menu_Selection.CONTINUE_GAME;
+    menu_selection = .CONTINUE_GAME;
 }
 
 debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
@@ -547,12 +543,18 @@ main :: () {
         ImGui.StyleColorsLight();
     }
 
-    for rom_filename_short: split(game.settings.rom, "|") {
+    for rom_filename_short, idx: split(game.settings.rom, "|") {
         array_resize(*game.cores, game.cores.count + 1);
         new_core := *game.cores[game.cores.count - 1];
 
         core_filename := tprint("data/cores/%", game.settings.core);
         rom_filename  := tprint("data/roms/%", rom_filename_short);
+
+        if idx > 0 {
+            // for now, mute any core but the first, since our audio backend can't handle
+            // multiple sources at the moment.
+            new_core.audio.mute = true;
+        }
 
         if (!RetroGL.load_core(new_core, core_filename)) exit(1);
         if (!RetroGL.load_game(new_core, rom_filename)) exit(1);
@@ -651,22 +653,4 @@ load_state_from_file :: (core: *Retro.Core, save_filename: string) -> bool {
 
     bytes, ok := read_entire_file(save_filename);
     return ok && core.unserialize(bytes.data, bytes.count);
-}
-
-load_new_core :: (
-    core_filename: string,
-    rom_filename: string,
-    savestate_filename: string = ""
-) -> bool {
-
-    array_resize(*game.cores, game.cores.count + 1);
-    new_core := *game.cores[game.cores.count - 1];
-
-    if (!RetroGL.load_core(new_core, core_filename))
-        return false;
-
-    if (!RetroGL.load_game(new_core, rom_filename))
-        return false;
-    
-    return true;
 }
