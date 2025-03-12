@@ -11,9 +11,9 @@ new_Light :: () -> *Light {
     light := New(Light);
     light.shadow_map = make_framebuffer(game.shadow_map_size, game.shadow_map_size, msaa=false, color=false, depth=true);
 
-    light.direction = make_vector3(-0.4, -0.8, -1);
+    light.direction = .{-0.4, -0.8, -1};
     // light.radiance = make_vector3(1, 1, 1);
-    light.radiance = make_vector3(0.8, 0.5, 0.2);
+    light.radiance = .{0.8, 0.5, 0.2};
 
     return light;
 }
@@ -124,7 +124,11 @@ make_Vertex :: (x: float, y: float, u: float, v: float) -> Vertex {
 
 draw_quad :: (q: Quad, color: Vector4) {
     shader := game.untextured_quad_shader;
-    use_shader_and_update_matrices(shader, matrix4_identity());
+
+    identity_mat: Matrix4;
+    identity(*identity_mat);
+
+    use_shader_and_update_matrices(shader, identity_mat);
     apply_material(shader, null);
     
     tex := q; // @Hack because I'm too lazy to remove the tex.* stuff
@@ -188,7 +192,7 @@ draw_unlit_quad :: (q: Quad, tex: Quad, texture: u32) {
 
 draw_textured_quad :: (q: Quad, texture: u32) {
     shader := game.textured_quad_shader;
-    use_shader_and_update_matrices(shader, matrix4_identity());
+    use_shader_and_update_matrices(shader, Matrix4_Identity);
     apply_material(shader, null);
 
     glBindTexture(GL_TEXTURE_2D, texture);
@@ -234,7 +238,7 @@ draw_text :: (font: *Dynamic_Font, color: Vector4, x: int, y: int, fmt: string, 
     defer free(text);
 
     shader := game.textured_quad_shader;
-    use_shader_and_update_matrices(shader, matrix4_identity());
+    use_shader_and_update_matrices(shader, Matrix4_Identity);
     apply_material(shader, null);
 
     prep_text(font, x, y, make_vector4(1, 1, 1, 1), text);
@@ -347,7 +351,7 @@ use_shader_and_update_matrices :: (shader: GLuint, model: Matrix4) {
         }
     }
 
-    position := make_vector3(0, 0, 0);
+    position := Vector3.{0, 0, 0};
     glUniform3f(uniloc(shader, "camera.position"), position.x, position.y, position.z);
     glUniform1i(uniloc(shader, "num_lights"), cast(s32) num_lights);
 }
@@ -501,13 +505,14 @@ resize_buffer :: (fbo: *Framebuffer, width: s32, height: s32) {
 
 get_framebuffer_dimensions :: (fb: *Framebuffer) -> (width: s32, height: s32) {
     if !fb {
-        #if OS_MACOSX {
+        #if OS == .MACOS {
             Objective_C :: #import "Objective_C";
-            ctx := Objective_C.NSOpenGLContext.currentContext();
+            #import "Objective_C/AppKit";
+            ctx := NSOpenGLContext.currentContext();
             view := ctx.view(ctx);
 
-            frame := Objective_C.NSView.frame(view);
-            fb := Objective_C.NSView.convertRectToBacking(view, frame);
+            frame := NSView.frame(view);
+            fb := NSView.convertRectToBacking(view, frame);
             return cast(s32) fb.size.width, cast(s32) fb.size.height;
         } else {
             return game.window_width, game.window_height;

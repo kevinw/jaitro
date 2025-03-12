@@ -1,5 +1,8 @@
 #if OS == .WINDOWS {
     saudio_lib :: #library,no_dll "win/sokol_audio";
+} 
+#if OS == .MACOS {
+    saudio_lib :: #library,no_dll "mac/sokol_audio";
 }
 
 /* setup sokol-audio */

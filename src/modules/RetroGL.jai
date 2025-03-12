@@ -56,8 +56,7 @@ GL_Core :: struct {
 g_core: *GL_Core; // TODO: do we need this global, or is there a way to sneak userdata in through libretro calls?
 
 core_environment :: (cmd: Environment_Command, data: *void) -> bool #c_call {
-    ctx: Context;
-    push_context ctx {
+    push_context {
     assert(g_core != null);
 
     if cmd == {
@@ -157,8 +156,7 @@ video_set_pixel_format :: (format: Pixel_Format) -> bool {
  */
 
 video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
-    ctx: Context;
-    push_context ctx {
+    push_context {
     assert(g_core != null);
     }
 
@@ -181,8 +179,7 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) #c_call {
 }
 
 core_video_refresh :: (data: *void, width: u32, height: u32, pitch: int) #c_call {
-    ctx: Context;
-    push_context ctx {
+    push_context {
         if data != null
             video_refresh(data, width, height, cast(u32)pitch);
     }
@@ -270,7 +267,7 @@ get_video_texture :: (core: *GL_Core) -> u32 {
 get_video_texture_uv :: (core: *GL_Core) -> Vector2 {
     assert(core != null);
     using core.video;
-    return make_vector2(cast(float)clip_w / tex_w, cast(float)clip_h / tex_h);
+    return .{cast(float)clip_w / tex_w, cast(float)clip_h / tex_h};
 }
 
 get_video_texture_aspect :: (core: *GL_Core) -> float {
@@ -429,8 +426,7 @@ core_audio_sample :: (left: s16, right: s16) #c_call {
 	//int16_t buf[2] = {left, right};
 	//audio_write(buf, 1);
 
-    ctx: Context;
-    push_context ctx {
+    push_context {
         assert(false, "TODO: implement single sample version of libretro audio");
     }
 }

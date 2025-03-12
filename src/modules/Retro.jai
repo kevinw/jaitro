@@ -10,9 +10,7 @@ File :: #import "File";
 String :: #import "String";
 
 log_eprintln :: (msg: string, args: ..Any) {
-    Log.error();
-    msg_with_newline := tprint("%\n", msg);
-    Log.print(msg_with_newline, ..args);
+   log_error(msg, ..args);
 }
 
 g_win: *Window_Type;
@@ -1163,7 +1161,7 @@ load_core_funcs :: (core: *Core, filename: string, copy_to_temp_dir := true) -> 
 
       filename_part := String.path_filename(filename);
       _core_count += 1;
-      new_path = String.concatenate(path, "/", filename_part, tprint("%", _core_count));
+      new_path = String.join(path, "/", filename_part, tprint("%", _core_count));
       print("% -> %\n", filename, new_path);
       File.file_delete(new_path);
       res := File_Utilities.copy_file(filename, new_path);

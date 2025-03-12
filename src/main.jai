@@ -116,10 +116,10 @@ render_game :: () {
     proj := game.projection;
     defer game.projection = proj;
 
-    game.view = matrix4_identity();
+    identity(*game.view);
     game.projection = orthographic_projection_matrix(0, cast(float) game.window_width, 0, cast(float) game.window_height, -1, 1);
 
-    white := make_vector4(1, 1, 1, 1);
+    white := Vector4.{1, 1, 1, 1};
 
     {
         base := game.window_height - FONT_HEIGHT;
@@ -150,16 +150,16 @@ render_menu :: () {
     view := game.view;
     defer game.view = view;
 
-    game.view = matrix4_identity();
+    identity(*game.view);
 
     game.projection = orthographic_projection_matrix(0, cast(float) game.window_width, 0, cast(float) game.window_height, -1, 1);
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-    draw_quad(make_Quad(0, 0, cast(float) game.window_width, cast(float) game.window_height), make_vector4(0.2, 0.2, 0.2, 0.5));
+    draw_quad(make_Quad(0, 0, cast(float) game.window_width, cast(float) game.window_height), Vector4.{0.2, 0.2, 0.2, 0.5});
     glDisable(GL_BLEND);
 
-    yellow := make_vector4(1, 1, 0, 1);
-    white  := make_vector4(1, 1, 1, 1);
+    yellow := Vector4.{1, 1, 0, 1};
+    white  := Vector4.{1, 1, 1, 1};
 
     base := game.window_height - 330 + 64;
 
@@ -226,7 +226,7 @@ render :: () {
     view := game.view;
     defer game.view = view;
 
-    game.view = matrix4_identity();
+    identity(*game.view);
 
     game.projection = orthographic_projection_matrix(0, 1, 0, 1, -1, 1);
 
@@ -295,7 +295,7 @@ reset_game :: () {
 }
 
 debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, length: GLsizei, message: *u8, userParam: *void) #c_call {
-    pctx := cast(*Context) userParam;
+    pctx := cast(*#Context) userParam;
     ctx := <<pctx;
     push_context ctx {
         #if OS == .WINDOWS {
@@ -313,8 +313,8 @@ debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, l
 
 
 init_game :: () {
-    context.logger = (message: string, ident: string, mode: Log_Mode, data: *void) {
-        print("[%] %", ident, message);
+    context.logger = (message: string, data: *void, info: Log_Info) {
+        print("[%] %", info, message);
     };
 
     {
@@ -568,7 +568,7 @@ main :: () {
 
         load_resources();
 
-        view = matrix4_identity();
+        identity(*view);
     
         reset_game();
 
@@ -583,15 +583,16 @@ main :: () {
         resize_buffer(*game_framebuffer, fb_width, fb_height);
     }
 
-    #if OS_MACOSX {
-        Objective_C :: #import "Objective_C";
+    #if OS == .MACOS {
+        #import "Objective_C";
+        #import "Objective_C/AppKit";
         #import "Objective_C/LightweightRenderingView";
 
-        view := Objective_C.NSWindow.contentView(window);
+        view := NSWindow.contentView(window);
         glview := cast(*LightweightOpenGLView) view;
 
         value: s32 = 1;
-        Objective_C.NSOpenGLContext.setValues(glview.glContext(glview), *value, Objective_C.NSOpenGLContextParameterSwapInterval);
+        NSOpenGLContext.setValues(glview.glContext(glview), *value, NSOpenGLContextParameterSwapInterval);
     }
 
     while true {
@@ -604,10 +605,10 @@ main :: () {
 }
 
 change_to_runtree_dir :: () {
-    if running_at_compile_time() {
+    if #compile_time {
         set_working_directory(sprint("%1%2", #filepath, "../run_tree"));
     } else {
-        #if OS_MACOSX {
+        #if OS == .MACOS {
             set_working_directory(osx_get_bundle_resources_directory());
         } else {
             set_working_directory(path_strip_filename(get_path_of_running_executable()));
@@ -624,8 +625,7 @@ save_game :: (core: *Retro.Core) {
     memset(data, 0, sz);
     ok := core.serialize(data, sz);
     if !ok {
-        Log.error();
-        Log.print("could not unserialize save game!\n");
+        log_error("could not unserialize save game!");
         return;
     }
 
@@ -641,8 +641,7 @@ load_game :: (core: *Retro.Core) {
     if _saved_game.data != null {
         ok := core.unserialize(_saved_game.data, _saved_game.count);
         if !ok {
-            Log.error();
-            Log.print("could not unserialize save game!\n");
+            log_error("could not unserialize save game!");
         }
     }
 }
