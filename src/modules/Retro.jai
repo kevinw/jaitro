@@ -1,11 +1,10 @@
 #import "Basic";
 #import "GL";
 #import "Input";
-#import "Render";
+#import "Simp";
 #import "Window_Creation";
 
 dynlib :: #import "Dyn_Lib";
-Log :: #import "Log";
 File_Utilities :: #import "File_Utilities";
 File :: #import "File";
 String :: #import "String";

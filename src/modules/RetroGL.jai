@@ -3,7 +3,7 @@
 #import "Basic";
 #import "GL";
 Input :: #import "Input";
-#import "Render";
+#import "Simp";
 #import "Window_Creation";
 #import "String";
 #import "System";
@@ -27,7 +27,7 @@ make_keymap :: (k: Key_Code, rk: u32) -> Keymap {
 }
 
 GL_Core :: struct {
-    using core: Core;
+    #as using core: Core;
 
     audio: struct {
         mute: bool = false;
@@ -188,7 +188,7 @@ core_video_refresh :: (data: *void, width: u32, height: u32, pitch: int) #c_call
     }
 }
 
-on_window_resized :: (window: *Input.Window_Type, w: u32, h: u32) {
+on_window_resized :: (window: *Window_Type, w: u32, h: u32) {
     glViewport(0, 0, w, h);
 }
 
@@ -396,7 +396,7 @@ panic :: (msg: string) {
     exit(1);
 }
 
-core_log :: (level: Log_Level, fmt: *u8, args:..*void) #c_call {
+core_log :: (level: Log_Level, fmt: *u8, args:..*void) #foreign #c_call {
     ctx: Context;
     push_context ctx {
     write_string(to_string(fmt));

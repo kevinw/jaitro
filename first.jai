@@ -6,12 +6,12 @@
 #import "File_Utilities";
 #import "File";
 
-#if OS_WINDOWS {
+#if OS == .WINDOWS {
     Windows_Resources :: #import "Windows_Resources";
     Ico_File :: #import "Ico_File";
 }
 
-#if OS_MACOSX {
+#if OS == .MACOS {
     Bundler :: #import "MacOS_Bundler";
 }
 
@@ -23,22 +23,26 @@ build :: (building_executable := true, build_release := false) -> Workspace {
     set_working_directory(#filepath);
     
     opts := get_build_options();
-    opts.output_type = Build_Output_Type.NO_OUTPUT;
-    set_build_options(opts);
+    set_build_options_dc(.{do_output=false});
 
-    opts.output_type = Build_Output_Type.EXECUTABLE;
+    opts.output_type = .EXECUTABLE;
     opts.output_executable_name = GAME_NAME;
     opts.output_path = "run_tree/";
-    array_add(*opts.modules_search_path_array, "src/modules/");
+
+    modules_paths: [..] string;
+    array_add(*modules_paths, "src/modules");
+    array_add(*modules_paths, ..opts.import_path);
+    opts.import_path = modules_paths;
+
     w := compiler_create_workspace(sprint("% by Kevin Watters", GAME_NAME)); // I think this @Leaks ?
     if building_executable then compiler_begin_intercept(w);
 
-    if BUILD_COCOA_APP && OS_MACOSX {
+    if BUILD_COCOA_APP && OS == .MACOS {
         opts.entry_point_name = "cocoa_application_main";
     }
 
     if build_release {
-        set_optimization_level(*opts, 3, 0);
+        set_optimization(*opts, .VERY_OPTIMIZED);
     }
 
     set_build_options(opts, w);
@@ -48,17 +52,15 @@ build :: (building_executable := true, build_release := false) -> Workspace {
     if building_executable {
         // Wait for COMPLETE message so we know our executable is built
         while true {
-            using Compiler_Message.Kind;
-            
             message := compiler_wait_for_message();
             if !message continue;
             if message.workspace != w continue;
-            if message.kind == COMPLETE break;
+            if message.kind == .COMPLETE break;
         }
 
         compiler_end_intercept(w);
 
-        #if OS_WINDOWS {
+        #if OS == .WINDOWS {
             exe_name := sprint("%1%2.exe", opts.output_path, opts.output_executable_name);
             translate_path(exe_name, #char "\\");
             defer free(exe_name);

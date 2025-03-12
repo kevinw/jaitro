@@ -1,5 +1,5 @@
-#if OS_WINDOWS {
-    saudio_lib :: #foreign_library,no_dll "win/sokol_audio";
+#if OS == .WINDOWS {
+    saudio_lib :: #library,no_dll "win/sokol_audio";
 }
 
 /* setup sokol-audio */

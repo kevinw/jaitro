@@ -2,7 +2,7 @@
 #import "GL";
 #import "Window_Creation";
 #import "Input";
-#import "Render";
+#import "Simp";
 #import "File";
 #import "Random";
 #import "String";
@@ -17,7 +17,7 @@
 Retro :: #import "Retro";
 RetroGL :: #import "RetroGL";
 
-#if OS_WINDOWS {
+#if OS == .WINDOWS {
     // press ` (~) to show the imgui debug ui for editing settings live.
     DEBUG_UI :: true; 
 } else {
@@ -298,7 +298,7 @@ debug_callback :: (source: GLenum, type: GLenum, id: GLuint, severity: GLenum, l
     pctx := cast(*Context) userParam;
     ctx := <<pctx;
     push_context ctx {
-        #if OS_WINDOWS {
+        #if OS == .WINDOWS {
             // print("source: %\n", source);
             // print("type: %\n", type);
             // print("id: %\n", id);
@@ -366,8 +366,7 @@ load_resources :: () {
         game.unlit_shader = compile_shader_source(simple_vert, unlit_frag);
     }
 
-    bytes_loaded: s64;
-    game.font, bytes_loaded = load_font("data", "YanoneKaffeesatz-Regular.otf", FONT_HEIGHT);
+    game.font = load_font("data", "YanoneKaffeesatz-Regular.otf", FONT_HEIGHT);
 }
 
 do_frame :: (window: Window_Type) -> did_render_frame: bool {

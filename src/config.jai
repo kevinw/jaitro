@@ -1,6 +1,5 @@
 #import "Text_File_Handler";
 #import "Reflection";
-Log :: #import "Log";
 
 //
 // parse a config file and write values from it into the `target` struct
