@@ -60,6 +60,11 @@ Exec_State :: struct {
     binds: [11]Keymap;
 
     frontend_did_update_core_variable: bool = false;
+
+    audio: struct {
+        mute := false;
+        did_init_with_sample_rate: float64 = -1;
+    };
 }
 
 #add_context ex: Exec_State;
@@ -138,8 +143,8 @@ load_core :: (core: *Core) -> bool {
     set_video_refresh(core_video_refresh);
     set_input_poll(core_input_poll);
     set_input_state(core_input_state);
-    //set_audio_sample(core_audio_sample);
-    //set_audio_sample_batch(core_audio_sample_batch);
+    set_audio_sample(core_audio_sample);
+    set_audio_sample_batch(core_audio_sample_batch);
 
     return true;
 }
@@ -193,10 +198,20 @@ core_audio_sample :: (left: s16, right: s16) #c_call {
     print("TODO: audio_sample %, %\n", left, right);
 }
 
+
 core_audio_sample_batch :: (data: *s16, frames: size_t) -> size_t #c_call {
     Push_Context();
-    print("TODO: audio_sample_batch %, %\n", data, frames);
-    return 0;
+    using context.ex;
+    if !audio.mute {
+        flt_buf: [4096]float;
+        S16_MAX :: 32767;
+        for i: 0..frames*2 #no_abc {
+            flt_buf[i] = cast(float)data[i] / cast(float)S16_MAX;
+        }
+        
+        saudio.push(flt_buf.data, cast(s32)frames);
+    }
+    return frames;
 }
 
 video_set_pixel_format :: (format: retro.pixel_format) -> bool {
@@ -375,7 +390,29 @@ do_load_game :: (core: *Core, path: string) -> bool {
 
         av: retro.system_av_info;
         core.get_system_av_info(*av);
+
+        // init video
         video_configure(*av.geometry);
+
+        // init audio
+        using context.ex;
+        if !audio.mute && av.timing.sample_rate != audio.did_init_with_sample_rate {
+            if audio.did_init_with_sample_rate != -1 {
+                print("AUDIO shutting down\n");
+                saudio.shutdown();
+            }
+
+            saudio_desc: saudio.Desc;
+            saudio_desc.num_channels = 2;
+            saudio_desc.sample_rate = cast(s32)av.timing.sample_rate;
+
+            print("initing audio with sample rate % and % channels\n", saudio_desc.sample_rate, saudio_desc.num_channels);
+            saudio.setup(*saudio_desc);
+
+            assert(saudio.isvalid()); // TODO: don't hard crash if we don't have a sound card....
+
+            audio.did_init_with_sample_rate = av.timing.sample_rate;
+        }
     }
 
     return true;
@@ -692,6 +729,7 @@ retro :: #import,file "./libretro.jai";
 #import "Process";
 Debug :: #import "Debug";
 #import "GL";
+saudio :: #import,file "./Sokol_Audio/module.jai";
 
 // workaround for jai not supporting varargs in #c_call yet. build with "pushd jaitro_c && ./build && popd"
 jaitro_c :: #library,no_dll "jaitro_c/jaitro_c";
