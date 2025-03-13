@@ -381,6 +381,21 @@ do_load_game :: (core: *Core, path: string) -> bool {
             path=temp_c_string(path)
         };
 
+        {
+            using context.ex;
+            using retro;
+            binds[0]  = .{cast(Key_Code)(#char "X"), RETRO_DEVICE_ID_JOYPAD_A};
+            binds[1]  = .{cast(Key_Code)(#char "Z"), RETRO_DEVICE_ID_JOYPAD_B};
+            binds[2]  = .{cast(Key_Code)(#char "A"), RETRO_DEVICE_ID_JOYPAD_Y};
+            binds[3]  = .{cast(Key_Code)(#char "S"), RETRO_DEVICE_ID_JOYPAD_X};
+            binds[4]  = .{.ARROW_UP, RETRO_DEVICE_ID_JOYPAD_UP};
+            binds[5]  = .{.ARROW_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN};
+            binds[6]  = .{.ARROW_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT};
+            binds[7]  = .{.ARROW_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT};
+            binds[8]  = .{.ENTER, RETRO_DEVICE_ID_JOYPAD_START};
+            binds[9]  = .{.BACKSPACE, RETRO_DEVICE_ID_JOYPAD_SELECT};
+        }
+
         Set_Context();
         did_load := core.load_game(*game_info);
         if !did_load {
