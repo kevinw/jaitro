@@ -16,9 +16,7 @@ get_symbol :: (module: Library, symbol_name: *u8) -> *void {
     assert(module != null);
     return GetProcAddress(module, symbol_name);
 }
-}
-
-#if OS == .MACOS {
+} else {
 
 #import "POSIX";
 
