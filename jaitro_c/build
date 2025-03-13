@@ -1,0 +1,2 @@
+#!/bin/bash -ex
+cc -Wall -o jaitro_log.o -c log.c && ar rcs jaitro_log.a jaitro_log.o

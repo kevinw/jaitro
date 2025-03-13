@@ -1,3 +1,5 @@
+size_t :: u64;
+
 my_window: Window_Type;
 window_width  : s32 = 1920;
 window_height : s32 = 1080;
@@ -49,12 +51,12 @@ load_sym :: (library: Library, sym_name: *u8) -> *void {
     return sym;
 }
 
-load_core :: () -> bool {
-
-    core: Core;
+load_core :: (core: *Core) -> bool {
+    assert(core != null);
     using core;
 
     dll = load("run_tree/cores/mesen_libretro.dylib");
+    //dll = load("run_tree/cores/mesen_libretro_debug.dylib");
     if !dll return false;
 
     #insert -> string {
@@ -76,7 +78,57 @@ load_core :: () -> bool {
     }
 
     set_environment(core_environment);
+    //set_video_refresh(core_video_refresh);
+    //set_input_poll(core_input_poll);
+    //set_input_state(core_input_state);
+    //set_audio_sample(core_audio_sample);
+    //set_audio_sample_batch(core_audio_sample_batch);
 
+    init();
+
+    return true;
+}
+
+core_video_refresh :: (data: *void, width: u32, height: u32, pitch: size_t) #c_call {
+    if data == null {
+        return;
+    }
+
+    push_context {  
+        print("TODO: video_refresh %, %, %, %\n", data, width, height, pitch);
+    }
+}
+
+core_input_poll :: () #c_call {
+    push_context {
+        print("TODO: input_poll\n");
+    }
+}
+
+core_input_state :: (port: u32, device: u32, index: u32, id: u32) -> s16 #c_call {
+    push_context {
+        print("TODO: input_state %, %, %, %\n", port, device, index, id);
+    }
+
+    return 0;
+}
+
+core_audio_sample :: (left: s16, right: s16) #c_call {
+    push_context {
+        print("TODO: audio_sample %, %\n", left, right);
+    }
+}
+
+core_audio_sample_batch :: (data: *s16, frames: size_t) -> size_t #c_call {
+    push_context {
+        print("TODO: audio_sample_batch %, %\n", data, frames);
+    }
+
+    return 0;
+}
+
+video_set_pixel_format :: (fmt: retro.pixel_format) -> bool {
+    print("TODO: set_pixel_format %\n", fmt);
     return true;
 }
 
@@ -94,10 +146,49 @@ core_environment :: (cmd: u32, data: *void) -> bool #c_call {
         case RETRO_ENVIRONMENT_GET_CAN_DUPE;
             (cast(*bool)data).* = true;
 
+        case RETRO_ENVIRONMENT_SET_PIXEL_FORMAT;
+            fmt := (cast(*retro.pixel_format)data).*;
+            if fmt > retro.pixel_format.RGB565 {
+                return false;
+            }
+
+            push_context { // TODO: use context from core's pointer
+                return video_set_pixel_format(fmt);
+            }
+
         case RETRO_ENVIRONMENT_GET_SYSTEM_DIRECTORY; #through;
         case RETRO_ENVIRONMENT_GET_SAVE_DIRECTORY;
             (cast(**u8)data).* = ".";
-            
+
+        case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION;
+            (cast(*u32)data).* = 1;
+
+        case RETRO_ENVIRONMENT_GET_LANGUAGE;
+            (cast(*retro.language)data).* = retro.language.ENGLISH;
+
+        case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO;
+            controller_info := cast(*retro.controller_info)data;
+            push_context {
+                while controller_info.types != null {
+                    //print("controller info: %\n", controller_info.*);
+
+                    controller_desc := controller_info.types;
+                    while controller_desc.id != 0 {
+                        //print("  desc: %\n", to_string(controller_desc.desc));
+                        //print("  id: %\n", controller_desc.id);
+                        controller_desc += 1;
+                    }
+
+                    controller_info += 1;
+                }
+            }
+
+        case RETRO_ENVIRONMENT_SET_CONTENT_INFO_OVERRIDE;
+            return false;
+
+        case RETRO_ENVIRONMENT_GET_INPUT_BITMASKS;
+            return false;
+        
         case;
             push_context {
                 print("Unhandled env %\n", cmd);
@@ -137,9 +228,15 @@ take_screenshot :: () {
 }
 
 main :: () {
-    if !load_core() {
+    core: Core;
+    did_load := load_core(*core);
+    if !did_load {
         print("Error loading core.\n");
         exit(1);
+    }
+
+    defer {
+        core.deinit();
     }
 
     #if OS == .WINDOWS {
