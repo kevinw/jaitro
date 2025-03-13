@@ -1,0 +1,4 @@
+.build/
+*.dSYM
+.DS_Store
+jaitro
