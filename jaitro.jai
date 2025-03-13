@@ -10,6 +10,8 @@ screenshot_index := 0;
 
 Key_Code :: Input.Key_Code;
 
+g_scale :: 3.0;
+
 Keymap :: struct {
     k: Key_Code;
     rk: u32;
@@ -17,19 +19,21 @@ Keymap :: struct {
 
 current_context: *#Context;
 
+// Call this from #c_call core callback functions to be able to access the context.
 Set_Context :: () #expand {
     assert(current_context == null);
     `current_context = *context;
     `defer { current_context = null; }
 }
 
+
+// Call this from Jai code invoking core functions, so that any of the callbacks have access to the context. We accomplish this by setting the current_context global variable to the current context.
 Push_Context :: () #expand {
     if current_context == null {
         push_context {
             Debug.breakpoint();
             ptr: *s8 = null;
             ptr.* = 0;
-
         }
     }
 
@@ -55,6 +59,7 @@ Exec_State :: struct {
     joy: [retro.RETRO_DEVICE_ID_JOYPAD_R3 + 1]s16;
     binds: [11]Keymap;
 
+    frontend_did_update_core_variable: bool = false;
 }
 
 #add_context ex: Exec_State;
@@ -133,21 +138,34 @@ load_core :: (core: *Core) -> bool {
     set_video_refresh(core_video_refresh);
     set_input_poll(core_input_poll);
     set_input_state(core_input_state);
-    set_audio_sample(core_audio_sample);
-    set_audio_sample_batch(core_audio_sample_batch);
-
-
+    //set_audio_sample(core_audio_sample);
+    //set_audio_sample_batch(core_audio_sample_batch);
 
     return true;
 }
 
 core_video_refresh :: (data: *void, width: u32, height: u32, pitch: size_t) #c_call {
-    if data == null {
-        return;
+    if data == null return;
+    Push_Context();
+    video_refresh(data, width, height, cast(u32)pitch);
+}
+
+video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) {
+    using context.ex;
+    if video.clip_w != width || video.clip_h != height {
+        video.clip_w = width;
+        video.clip_h = height;
     }
 
-    Push_Context();
-    print("TODO: video_refresh %, %, %, %\n", data, width, height, pitch);
+    glBindTexture(GL_TEXTURE_2D, video.tex_id);
+    if pitch != video.pitch {
+        video.pitch = pitch;
+        glPixelStorei(GL_UNPACK_ROW_LENGTH, cast(s32)(pitch / video.bpp));
+    }
+
+    if data {
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, video.pixtype, video.pixfmt, data);
+    }
 }
 
 core_input_poll :: () #c_call {
@@ -163,8 +181,8 @@ core_input_state :: (port: u32, device: u32, index: u32, id: u32) -> s16 #c_call
     using context.ex;
 
     if port || index || device != retro.RETRO_DEVICE_JOYPAD || id >= joy.count {
-        print("unknown core_input_state query %, %, %, %\n", port, device, index, id);
-        // return 0;
+        //print("unknown core_input_state query %, %, %, %\n", port, device, index, id);
+        return 0;
     }
 
     return joy[id];
@@ -181,9 +199,33 @@ core_audio_sample_batch :: (data: *s16, frames: size_t) -> size_t #c_call {
     return 0;
 }
 
-video_set_pixel_format :: (fmt: retro.pixel_format) -> bool {
+video_set_pixel_format :: (format: retro.pixel_format) -> bool {
     Push_Context();
-    print("TODO: set_pixel_format %\n", fmt);
+    using context.ex;
+
+    if video.tex_id != 0 {
+        log_error("video_set_pixel_format called after video has already been initialized");
+        return false;
+    }
+
+    if format == {
+        case ._0RGB1555;
+            video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
+            video.pixtype = GL_BGRA;
+            video.bpp = size_of(u16);
+        case .XRGB8888;
+            video.pixfmt = GL_UNSIGNED_INT_8_8_8_8_REV;
+            video.pixtype = GL_BGRA;
+            video.bpp = size_of(u32);
+        case .RGB565;
+            video.pixfmt = GL_UNSIGNED_SHORT_5_6_5;
+            video.pixtype = GL_RGB;
+            video.bpp = size_of(u16);
+        case;
+            log_error("unsupported pixel format %", format);
+            return false;
+    }
+
     return true;
 }
 
@@ -241,6 +283,14 @@ core_environment :: (cmd: u32, data: *void) -> bool #c_call {
 
         case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_INTL;
             return false;
+
+        case RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE;
+            // Queries whether at least one core option was updated by the frontend since the last call to \ref RETRO_ENVIRONMENT_GET_VARIABLE. This typically means that the user opened the core options menu and made some changes.
+            Push_Context();
+            using context.ex;
+            (cast(*bool)data).* = frontend_did_update_core_variable;
+            frontend_did_update_core_variable = false;
+            return true;
 
         case RETRO_ENVIRONMENT_GET_VARIABLE;
             variable := cast(*retro.variable)data;
@@ -322,25 +372,100 @@ do_load_game :: (core: *Core, path: string) -> bool {
             log_error("core failed to load game '%'", path);
             return false;
         }
+
+        av: retro.system_av_info;
+        core.get_system_av_info(*av);
+        video_configure(*av.geometry);
     }
 
     return true;
 }
 
+resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
+	<<dw = sw;
+	<<dh = sh;
+
+	if ratio <= 0
+		ratio = cast(float64)sw / sh;
+
+	if cast(float)sw / sh < 1 {
+		dw.* = cast(s32)(dh.* * ratio);
+    } else {
+		dh.* = cast(s32)(dw.* / ratio);
+    }
+}
+
+video_configure :: (geom: *retro.game_geometry) -> bool {
+    using context.ex;
+    assert(glGetError() == GL_NO_ERROR);
+
+    nwidth: s32;
+    nheight: s32;
+
+	resize_to_aspect(geom.aspect_ratio, cast(s32)geom.base_width * 1, cast(s32)geom.base_height * 1, *nwidth, *nheight);
+    assert(glGetError() == GL_NO_ERROR);
+
+	nwidth = cast(s32)(nwidth * g_scale);
+	nheight = cast(s32)(nheight * g_scale);
+
+
+    video.window_width = cast(s32)geom.max_width;
+    video.window_height = cast(s32)geom.max_height;
+
+    if video.tex_id {
+        glDeleteTextures(1, *video.tex_id);
+        video.tex_id = 0;
+    }
+
+    if !video.pixfmt {
+        video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
+    }
+
+    assert(glGetError() == GL_NO_ERROR);
+    glGenTextures(1, *video.tex_id);
+    assert(glGetError() == GL_NO_ERROR);
+
+    if !video.tex_id {
+        log_error("failed to create texture");
+        return false;
+    }
+
+    glBindTexture(GL_TEXTURE_2D, video.tex_id);
+    video.pitch = geom.base_width * video.bpp;
+
+    glBindTexture(GL_TEXTURE_2D, video.tex_id);
+
+    //	glPixelStorei(GL_UNPACK_ALIGNMENT, s_video.pixfmt == GL_UNSIGNED_INT_8_8_8_8_REV ? 4 : 2);
+    //	glPixelStorei(GL_UNPACK_ROW_LENGTH, s_video.pitch / s_video.bpp);
+
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+
+    //print("tex image created with max_width % and max_height %\n", geom.max_width, geom.max_height);
+    //print("clip_w/h is % %\n", geom.base_width, geom.base_height);
+
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, geom.max_width, geom.max_height, 0,
+			video.pixtype, video.pixfmt, null);
+
+	glBindTexture(GL_TEXTURE_2D, 0);
+
+	video.tex_w = cast(s32)geom.max_width;
+	video.tex_h = cast(s32)geom.max_height;
+	video.clip_w = geom.base_width;
+	video.clip_h = geom.base_height;
+
+
+    assert(glGetError() == GL_NO_ERROR);
+
+    return true;
+}
+
+advance_frame :: (core: *Core) {
+    Set_Context();
+    core.run();
+}
+
 main :: () {
-    core: Core;
-    did_load := load_core(*core);
-    if !did_load {
-        print("Error loading core.\n");
-        exit(1);
-    }
-
-    do_load_game(*core, "run_tree/roms/Bonk's Adventure.zip");
-
-    defer {
-        core.deinit();
-    }
-
     #if OS == .WINDOWS {
         Windows :: #import "Windows";
         Windows.SetProcessDPIAware();
@@ -362,6 +487,21 @@ main :: () {
     window_width, window_height = Simp.get_render_dimensions(my_window);
 
     Simp.set_render_target(my_window, .LEFT_HANDED);
+
+    ////////
+
+
+    core: Core;
+    did_load := load_core(*core);
+    if !did_load {
+        print("Error loading core.\n");
+        exit(1);
+    }
+    defer core.deinit();
+    do_load_game(*core, "run_tree/roms/Bonk's Adventure.zip");
+
+
+    ///////
 
     my_init_fonts();
     success := Simp.texture_load_from_file(*image_test, "image_test.jpg");
@@ -400,6 +540,7 @@ main :: () {
             }
         }
 
+        advance_frame(*core);
         draw_one_frame();
 
         if want_screenshot {
@@ -493,6 +634,25 @@ draw_one_frame :: () {
         Simp.immediate_flush();
     }
 
+    {
+        using context.ex;
+        if video.tex_id {
+            tex: Simp.Texture;
+            tex.width = video.tex_w;
+            tex.height = video.tex_h;
+            tex.format = .RGBA8;
+            tex.gl_handle = video.tex_id;
+            Simp.set_shader_for_images(*tex);
+            Simp.immediate_begin();
+            w := window_height/4.0;
+            y0 := cast(float) window_height;
+            x := 200.0;
+
+            Simp.immediate_quad(.{x, y0-w}, .{x+w, y0-w}, .{x+w, y0}, .{x, y0});
+            Simp.immediate_flush();
+        }
+    }
+
     Simp.swap_buffers(my_window);
 }
 
@@ -531,6 +691,7 @@ retro :: #import,file "./libretro.jai";
 #import "File_Utilities";
 #import "Process";
 Debug :: #import "Debug";
+#import "GL";
 
 // workaround for jai not supporting varargs in #c_call yet. build with "pushd jaitro_c && ./build && popd"
 jaitro_c :: #library,no_dll "jaitro_c/jaitro_c";
