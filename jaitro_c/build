@@ -1,2 +1,3 @@
-#!/bin/bash -ex
-cc -Wall -o jaitro_log.o -c log.c && ar rcs jaitro_log.a jaitro_log.o
+#!/bin/bash -e
+
+cc -Wall -o jaitro_c.o -c log.c && ar rcs jaitro_c.a jaitro_c.o
