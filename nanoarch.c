@@ -5,15 +5,21 @@
 #include <stdbool.h>
 #include <errno.h>
 #include <dlfcn.h>
+#include <assert.h>
+#include <memory.h>
 
 #include "libretro.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
+#if SOUND_ENABLED
 #include <alsa/asoundlib.h>
+#endif
 
 static GLFWwindow *g_win = NULL;
+#if SOUND_ENABLED
 static snd_pcm_t *g_pcm = NULL;
+#endif
 static float g_scale = 3;
 
 static GLfloat g_vertex[] = {
@@ -298,6 +304,7 @@ static void video_deinit() {
 
 
 static void audio_init(int frequency) {
+	#if SOUND_ENABLED
 	int err;
 
 	if ((err = snd_pcm_open(&g_pcm, "default", SND_PCM_STREAM_PLAYBACK, 0)) < 0)
@@ -307,15 +314,19 @@ static void audio_init(int frequency) {
 
 	if (err < 0)
 		die("Failed to configure playback device: %s", snd_strerror(err));
+	#endif
 }
 
 
 static void audio_deinit() {
+	#if SOUND_ENABLED
 	snd_pcm_close(g_pcm);
+	#endif
 }
 
 
 static size_t audio_write(const void *buf, unsigned frames) {
+	#if SOUND_ENABLED
 	if (!g_pcm)
 		return 0;
 
@@ -327,8 +338,10 @@ static size_t audio_write(const void *buf, unsigned frames) {
 
 		return 0;
 	}
-
 	return written;
+	#else
+	return frames;
+	#endif
 }
 
 
@@ -462,14 +475,15 @@ static void core_load(const char *sofile) {
 	load_sym(set_audio_sample_batch, retro_set_audio_sample_batch);
 
 	set_environment(core_environment);
+
+	g_retro.retro_init();
+	g_retro.initialized = true;
+
 	set_video_refresh(core_video_refresh);
 	set_input_poll(core_input_poll);
 	set_input_state(core_input_state);
 	set_audio_sample(core_audio_sample);
 	set_audio_sample_batch(core_audio_sample_batch);
-
-	g_retro.retro_init();
-	g_retro.initialized = true;
 
 	puts("Core loaded");
 }
