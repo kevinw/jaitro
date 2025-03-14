@@ -42,18 +42,15 @@ Push_Context :: () #expand {
 
 Exec_State :: struct {
     video: struct {
-        tex_id: u32;
+        tex: Simp.Texture;
+        simp_texture_format: Simp.Texture_Format;
         pitch: u32;
-        tex_w: s32;
-        tex_h: s32;
         clip_w: u32;
         clip_h: u32;
 
         pixfmt: u32;
         pixtype: u32;
         bpp: u32;
-
-        window_width, window_height: s32;
     };
 
     joy: [retro.RETRO_DEVICE_ID_JOYPAD_R3 + 1]s16;
@@ -157,20 +154,23 @@ core_video_refresh :: (data: *void, width: u32, height: u32, pitch: size_t) #c_c
 
 video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) {
     using context.ex;
-    if video.clip_w != width || video.clip_h != height {
-        video.clip_w = width;
-        video.clip_h = height;
+
+    bytes: []u8 = .{data=data, count=pitch*height};
+
+    bitmap: Simp.Bitmap = .{
+        data = bytes,
+        width = cast(s32)width,
+        height = cast(s32)height,
+        format = video.simp_texture_format,
+        stride = cast(s32)pitch,
+    };
+
+    if !Simp.texture_load_from_bitmap(*video.tex, *bitmap) {
+        log_error("failed to load bitmap into texture");
     }
 
-    glBindTexture(GL_TEXTURE_2D, video.tex_id);
-    if pitch != video.pitch {
-        video.pitch = pitch;
-        glPixelStorei(GL_UNPACK_ROW_LENGTH, cast(s32)(pitch / video.bpp));
-    }
-
-    if data {
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, video.pixtype, video.pixfmt, data);
-    }
+    video.clip_w = width;
+    video.clip_h = height;
 }
 
 core_input_poll :: () #c_call {
@@ -198,7 +198,6 @@ core_audio_sample :: (left: s16, right: s16) #c_call {
     print("TODO: audio_sample %, %\n", left, right);
 }
 
-
 core_audio_sample_batch :: (data: *s16, frames: size_t) -> size_t #c_call {
     Push_Context();
     using context.ex;
@@ -218,24 +217,19 @@ video_set_pixel_format :: (format: retro.pixel_format) -> bool {
     Push_Context();
     using context.ex;
 
-    if video.tex_id != 0 {
+    if video.tex.gl_handle != 0 {
         log_error("video_set_pixel_format called after video has already been initialized");
         return false;
     }
 
     if format == {
         case ._0RGB1555;
-            video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
-            video.pixtype = GL_BGRA;
-            video.bpp = size_of(u16);
+            log_error("Simp doesn't support _0RGB1555");
+            assert(false);
         case .XRGB8888;
-            video.pixfmt = GL_UNSIGNED_INT_8_8_8_8_REV;
-            video.pixtype = GL_BGRA;
-            video.bpp = size_of(u32);
+            video.simp_texture_format = .RGBA8;
         case .RGB565;
-            video.pixfmt = GL_UNSIGNED_SHORT_5_6_5;
-            video.pixtype = GL_RGB;
-            video.bpp = size_of(u16);
+            video.simp_texture_format = .B5G6R5;
         case;
             log_error("unsupported pixel format %", format);
             return false;
@@ -449,65 +443,15 @@ resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
 
 video_configure :: (geom: *retro.game_geometry) -> bool {
     using context.ex;
-    assert(glGetError() == GL_NO_ERROR);
 
     nwidth: s32;
     nheight: s32;
-
 	resize_to_aspect(geom.aspect_ratio, cast(s32)geom.base_width * 1, cast(s32)geom.base_height * 1, *nwidth, *nheight);
-    assert(glGetError() == GL_NO_ERROR);
-
 	nwidth = cast(s32)(nwidth * g_scale);
 	nheight = cast(s32)(nheight * g_scale);
 
-
-    video.window_width = cast(s32)geom.max_width;
-    video.window_height = cast(s32)geom.max_height;
-
-    if video.tex_id {
-        glDeleteTextures(1, *video.tex_id);
-        video.tex_id = 0;
-    }
-
-    if !video.pixfmt {
-        video.pixfmt = GL_UNSIGNED_SHORT_5_5_5_1;
-    }
-
-    assert(glGetError() == GL_NO_ERROR);
-    glGenTextures(1, *video.tex_id);
-    assert(glGetError() == GL_NO_ERROR);
-
-    if !video.tex_id {
-        log_error("failed to create texture");
-        return false;
-    }
-
-    glBindTexture(GL_TEXTURE_2D, video.tex_id);
-    video.pitch = geom.base_width * video.bpp;
-
-    glBindTexture(GL_TEXTURE_2D, video.tex_id);
-
-    //	glPixelStorei(GL_UNPACK_ALIGNMENT, s_video.pixfmt == GL_UNSIGNED_INT_8_8_8_8_REV ? 4 : 2);
-    //	glPixelStorei(GL_UNPACK_ROW_LENGTH, s_video.pitch / s_video.bpp);
-
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-    //print("tex image created with max_width % and max_height %\n", geom.max_width, geom.max_height);
-    //print("clip_w/h is % %\n", geom.base_width, geom.base_height);
-
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, geom.max_width, geom.max_height, 0,
-			video.pixtype, video.pixfmt, null);
-
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	video.tex_w = cast(s32)geom.max_width;
-	video.tex_h = cast(s32)geom.max_height;
 	video.clip_w = geom.base_width;
 	video.clip_h = geom.base_height;
-
-
-    assert(glGetError() == GL_NO_ERROR);
 
     return true;
 }
@@ -527,11 +471,7 @@ main :: () {
     }
 
     WANTED_MSAA :: 0;
-    // On Linux, we need to pass the MSAA value to create_window
     my_window = create_window(window_width, window_height, "jaitro", wanted_msaa = WANTED_MSAA);
-
-    // On other operating systems, the MSAA value needs to be passed to *_create_context, so we
-    // need to have an extra step here if you want MSAA.
     msaa := Simp.prepare_window(my_window, wanted_msaa = WANTED_MSAA);
     log("Wanted MSAA: %\nChosen MSAA: %", WANTED_MSAA, msaa);
 
@@ -541,7 +481,6 @@ main :: () {
     Simp.set_render_target(my_window, .LEFT_HANDED);
 
     ////////
-
 
     core: Core;
     did_load := load_core(*core);
@@ -600,19 +539,32 @@ main :: () {
             want_screenshot = false;
         }
 
-        sleep_milliseconds(10);
+        //sleep_milliseconds(10);
         reset_temporary_storage();
     }
 }
 
 draw_one_frame :: () {
-    Simp.clear_render_target(.15, .08, .08, 1);
-
-    Simp.set_shader_for_color();
+    Simp.clear_render_target(0, 0, 0, 1);
 
     time := seconds_since_init();
 
+// Draw the emulator
+    {
+        using context.ex.video;
+        if tex.width && tex.height {
+            Simp.set_shader_for_images(*tex);
+            Simp.immediate_begin();
+            w := window_width;
+            h := window_height;
+            x := 0.0;
+            y := cast(float) window_height;
+            Simp.immediate_quad(.{x, y-h}, .{x+w, y-h}, .{x+w, y}, .{x, y});
+        }
+    }
+
     // This is our own code to set up a rotating square:
+    Simp.set_shader_for_color();
     {
         b := cast(float)window_height / 10;
         p: Vector2;
@@ -669,6 +621,11 @@ draw_one_frame :: () {
         text_y := window_height/2 + my_font.character_height/4;
 
         Simp.draw_prepared_text(my_font, text_x, text_y, color);
+
+        Simp.draw_prepared_text(my_font, 
+            cast(s64)(cast(float32)text_x+cos(theta)*2.0), 
+            cast(s64)(cast(float32)text_y+sin(theta)*2.0), 
+            color * 0.55);
     }
 
 
@@ -686,24 +643,6 @@ draw_one_frame :: () {
         Simp.immediate_flush();
     }
 
-    {
-        using context.ex;
-        if video.tex_id {
-            tex: Simp.Texture;
-            tex.width = video.tex_w;
-            tex.height = video.tex_h;
-            tex.format = .RGBA8;
-            tex.gl_handle = video.tex_id;
-            Simp.set_shader_for_images(*tex);
-            Simp.immediate_begin();
-            w := window_height/4.0;
-            y0 := cast(float) window_height;
-            x := 200.0;
-
-            Simp.immediate_quad(.{x, y0-w}, .{x+w, y0-w}, .{x+w, y0}, .{x, y0});
-            Simp.immediate_flush();
-        }
-    }
 
     Simp.swap_buffers(my_window);
 }
