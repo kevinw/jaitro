@@ -11,12 +11,6 @@ screenshot_index := 0;
 Key_Code :: Input.Key_Code;
 
 g_scale :: 3.0;
-
-Keymap :: struct {
-    k: Key_Code;
-    rk: u32;
-}
-
 current_context: *#Context;
 
 // Call this from #c_call core callback functions to be able to access the context.
@@ -46,13 +40,14 @@ Exec_State :: struct {
         core_video_tex_format: Simp.Texture_Format;
         clip_w: u32;
         clip_h: u32;
-
-        fps: float64;
         desired_frame_time: float64;
     };
 
     joy: [retro.RETRO_DEVICE_ID_JOYPAD_R3 + 1]s16;
-    binds: [11]Keymap;
+    binds: [11]struct {
+        k: Key_Code;
+        rk: u32;
+    };
 
     frontend_did_update_core_variable: bool = false;
 
@@ -225,7 +220,7 @@ video_set_pixel_format :: (format: retro.pixel_format) -> bool {
             log_error("Simp doesn't support _0RGB1555");
             assert(false);
         case .XRGB8888;
-            video.core_video_tex_format = .RGBA8;
+            video.core_video_tex_format = .BGRA8;
         case .RGB565;
             video.core_video_tex_format = .B5G6R5;
         case;
@@ -454,25 +449,15 @@ video_configure :: (av: *retro.system_av_info) -> bool {
         video.clip_h = geom.base_height;
     }
 
-    video.fps =  av.timing.fps;
-    video.desired_frame_time = 1.0 / av.timing.fps;
-    print("desired FPS %\n", video.fps);
-
+    video.desired_frame_time = 1.0 / cast(float64)av.timing.fps;
     return true;
-}
-
-advance_frame :: (core: *Core) {
-    Set_Context();
-    core.run();
 }
 
 main :: () {
     #if OS == .WINDOWS {
         Windows :: #import "Windows";
         Windows.SetProcessDPIAware();
-
-        // Windows is very bad at thread-switching by default unless you do this. Sad.
-        Windows.timeBeginPeriod(1);
+        Windows.timeBeginPeriod(1); // Windows is very bad at thread-switching by default unless you do this. Sad.
     }
 
     WANTED_MSAA :: 0;
@@ -507,10 +492,7 @@ main :: () {
     want_screenshot := false;
     last_time := seconds_since_init();
     while !quit {
-        current := seconds_since_init();
-        elapsed_seconds := current - last_time;
-        last_time = current;
-
+        start := seconds_since_init();
         Input.update_window_events();
 
         for Input.get_window_resizes() {
@@ -518,30 +500,26 @@ main :: () {
 
             if it.window == my_window {
                 should_reinit := (it.width != window_width) || (it.height != window_height);
-
                 window_width  = it.width;
                 window_height = it.height;
-
                 if should_reinit my_init_fonts();  // Resize the font for the new window size.
             }
         }
 
         for Input.events_this_frame {
             if it.type == .QUIT then quit = true;
-
             if it.type == {
               case .KEYBOARD;
-                if it.key_pressed && it.key_code == .ESCAPE {
-                    quit = true;
-                }
-
-                if it.key_pressed && it.key_code == #char " " {  // Press spacebar to take a screenshot.
-                    want_screenshot = true;
-                }
+                if it.key_pressed && it.key_code == .ESCAPE quit = true;
+                if it.key_pressed && it.key_code == #char " " want_screenshot = true;
             }
         }
 
-        advance_frame(*core);
+        {
+            Set_Context();
+            core.run();
+        }
+
         draw_one_frame();
 
         if want_screenshot {
@@ -549,14 +527,19 @@ main :: () {
             want_screenshot = false;
         }
 
-        // Sleep for desired frame time
-        frame_end_time := seconds_since_init() - current;
-        total_frame_time := elapsed_seconds + frame_end_time;
-        sleep_time := context.ex.video.desired_frame_time - total_frame_time;
-        if sleep_time > 0 sleep_milliseconds(cast(s32)floor(sleep_time * 1000));
 
         //sleep_milliseconds(10);
         reset_temporary_storage();
+
+        elapsed_seconds := seconds_since_init() - start;
+
+        sleep_time := context.ex.video.desired_frame_time - elapsed_seconds;
+        ms := cast(s32)floor(sleep_time * 1000);
+        if sleep_time > 0 {
+            sleep_milliseconds(ms);
+        }
+
+
     }
 }
 
@@ -565,7 +548,7 @@ draw_one_frame :: () {
 
     time := seconds_since_init();
 
-// Draw the emulator
+    // Draw the emulator
     {
         using context.ex.video;
         if tex.width && tex.height {
@@ -658,6 +641,13 @@ draw_one_frame :: () {
         Simp.immediate_quad(.{0, y0-w}, .{w, y0-w}, .{w, y0}, .{0, y0});
         Simp.immediate_flush();
     }
+
+    /*{ // draw fps text
+        color: Vector4 = .{1, 1, 1, 1};
+        text := tprint("FPS: %.1f", fps);
+        Simp.prepare_text(my_font, text);
+        Simp.draw_prepared_text(my_font, 0, 50, color);
+    }*/
 
 
     Simp.swap_buffers(my_window);
