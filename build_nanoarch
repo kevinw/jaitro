@@ -1,0 +1,3 @@
+#!/bin/bash -xe
+
+cc -Wall -Ilibretro -I/opt/homebrew/include -L/opt/homebrew/lib -lglfw -lglew -framework OpenGL nanoarch.c -o nanoarch
