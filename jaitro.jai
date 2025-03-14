@@ -38,8 +38,6 @@ Exec_State :: struct {
     video: struct {
         tex: Simp.Texture;
         core_video_tex_format: Simp.Texture_Format;
-        clip_w: u32;
-        clip_h: u32;
         desired_frame_time: float64;
     };
 
@@ -102,15 +100,19 @@ load_sym :: (library: Library, sym_name: *u8) -> *void {
     return sym;
 }
 
-load_core :: (core: *Core) -> bool {
+load_core :: (core: *Core, path_to_core_dll: string) -> bool {
+    if !file_exists(path_to_core_dll) {
+        log_error("core DLL does not exist: %", path_to_core_dll);
+        return false;
+    }
 
     assert(core != null);
     using core;
 
-    dll = load("run_tree/cores/mesen_libretro.dylib");
-    //dll = load("run_tree/cores/mesen_libretro_debug.dylib");
+    dll = load(path_to_core_dll);
     if !dll return false;
 
+    // Load all the core's functions from the DLL
     #insert -> string {
         sb: String_Builder;
         fmt_str :: "% = load_sym(dll, \"retro_%\");";
@@ -148,10 +150,8 @@ core_video_refresh :: (data: *void, width: u32, height: u32, pitch: size_t) #c_c
 video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) {
     using context.ex;
 
-    bytes: []u8 = .{data=data, count=pitch*height};
-
     bitmap: Simp.Bitmap = .{
-        data = bytes,
+        data = .{data=data, count=pitch*height},
         width = cast(s32)width,
         height = cast(s32)height,
         format = video.core_video_tex_format,
@@ -161,9 +161,6 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) {
     if !Simp.texture_load_from_bitmap(*video.tex, *bitmap) {
         log_error("failed to load bitmap into texture");
     }
-
-    video.clip_w = width;
-    video.clip_h = height;
 }
 
 core_input_poll :: () #c_call {
@@ -297,8 +294,8 @@ core_environment :: (cmd: u32, data: *void) -> bool #c_call {
         case RETRO_ENVIRONMENT_GET_VARIABLE;
             variable := cast(*retro.variable)data;
             if !variable { return false; }
-            Push_Context();
-            print(": get_variable % - % (ignoring)\n", to_string(variable.key), to_string(variable.value));
+            //Push_Context();
+            //print(": get_variable % - % (ignoring)\n", to_string(variable.key), to_string(variable.value));
             return false;
 
         case RETRO_ENVIRONMENT_SET_GEOMETRY;
@@ -314,10 +311,27 @@ core_environment :: (cmd: u32, data: *void) -> bool #c_call {
             e := cast(*retro.game_info_ext)data;
             if !e { return false; }
             return false;
-        
+
+        case RETRO_ENVIRONMENT_SET_SUBSYSTEM_INFO;
+            subsystem_info := cast(*retro.subsystem_info)data;
+            return false;
+
+        case RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY;
+            return false;
+
+        case RETRO_ENVIRONMENT_SET_HW_RENDER;
+            hw_render_callback := cast(*retro.hw_render_callback)data;
+            Push_Context();
+            if hw_render_callback.context_type == {
+                case .OPENGL_CORE;
+                    return true;
+                case;
+                    log_error("unsupported context type %", hw_render_callback.context_type);
+                    return false;
+            }
         case;
             Push_Context();
-            print("Unhandled env %\n", cmd);
+            print("Unhandled env %\n", get_name_for_retro_environment_enum(cmd));
             return false;
     }
 
@@ -334,12 +348,29 @@ take_screenshot :: () {
     Simp.deinit(*bitmap);
 }
 
-do_load_game :: (core: *Core, path: string) -> bool {
+// Returns true if the ROM is identified, and the path to the core DLL.
+identify_rom_by_extension :: (path: string) -> (bool, string) {
+    p := to_lower_copy(path,, allocator=temp);
+    if ends_with(p, ".nes")
+        return true, NES_CORE_DLL_PATH;
+    else if ends_with(p, ".n64") || ends_with(p, ".v64")
+        return true, N64_CORE_DLL_PATH;
+    return false, "";
+}
+
+PATH_TO_CORES     :: "run_tree/cores/";
+N64_CORE_DLL_PATH :: "mupen64plus_next_libretro.dylib";
+NES_CORE_DLL_PATH :: "mesen_libretro.dylib";
+
+load_core_and_game :: (core: *Core, path: string) -> bool {
     // Check if file exists
     if !file_exists(path) {
         log_error("file % does not exist", path);
         return false;
     }
+
+    core_dll: string;
+    path_to_rom: string;
 
     if ends_with(path, ".zip") {
         // Unzip the file
@@ -356,65 +387,85 @@ do_load_game :: (core: *Core, path: string) -> bool {
         run_command("unzip", "-u", "-qq", path, "-d", output_dir);
         print("done\n");
 
-        file_path := tprint("%/%.nes", output_dir, basename); // TODO: actually list the contents of the zip and find the ROM
-        return do_load_game(core, file_path);
-
+        for file_list(output_dir,, allocator=temp) {
+            print("checking %\n", it);
+            is_identified, _core_dll_path := identify_rom_by_extension(it);
+            if !is_identified continue;
+            path_to_rom = it;
+            core_dll = _core_dll_path;
+            break;
+        }
+    } else {
+        is_identified, _core_dll_path := identify_rom_by_extension(path);
+        if is_identified {
+            path_to_rom = path;
+            core_dll = _core_dll_path;
+        }
     }
 
-    if ends_with(path, ".nes") {
-        print("Loading NES game %\n", path);
-
-        game_info: retro.game_info = .{
-            path=temp_c_string(path)
-        };
-
-        {
-            using context.ex;
-            using retro;
-            binds[0]  = .{cast(Key_Code)(#char "X"), RETRO_DEVICE_ID_JOYPAD_A};
-            binds[1]  = .{cast(Key_Code)(#char "Z"), RETRO_DEVICE_ID_JOYPAD_B};
-            binds[2]  = .{cast(Key_Code)(#char "A"), RETRO_DEVICE_ID_JOYPAD_Y};
-            binds[3]  = .{cast(Key_Code)(#char "S"), RETRO_DEVICE_ID_JOYPAD_X};
-            binds[4]  = .{.ARROW_UP, RETRO_DEVICE_ID_JOYPAD_UP};
-            binds[5]  = .{.ARROW_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN};
-            binds[6]  = .{.ARROW_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT};
-            binds[7]  = .{.ARROW_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT};
-            binds[8]  = .{.ENTER, RETRO_DEVICE_ID_JOYPAD_START};
-            binds[9]  = .{.BACKSPACE, RETRO_DEVICE_ID_JOYPAD_SELECT};
-        }
-
-        Set_Context();
-        did_load := core.load_game(*game_info);
-        if !did_load {
-            log_error("core failed to load game '%'", path);
+    if core_dll != "" && path_to_rom != "" {
+        core_dll_path := tprint("%/%", PATH_TO_CORES, core_dll);
+        if !load_core(core, core_dll_path) {
+            log_error("failed to load core at %", core_dll_path);
             return false;
         }
+        return do_load_rom(core, path_to_rom);
+    }
 
-        av: retro.system_av_info;
-        core.get_system_av_info(*av);
+    return false;
+}
 
-        // init video
-        video_configure(*av);
+do_load_rom :: (core: *Core, path: string) -> bool {
+    print("Loading ROM: %\n", path);
 
-        // init audio
+    game_info: retro.game_info = .{ path=temp_c_string(path) };
+
+    { // TODO: move this to somewhere more appropriate
         using context.ex;
-        if !audio.mute && av.timing.sample_rate != audio.did_init_with_sample_rate {
-            if audio.did_init_with_sample_rate != -1 {
-                print("AUDIO shutting down\n");
-                saudio.shutdown();
-            }
+        using retro;
+        binds[0]  = .{cast(Key_Code)(#char "X"), RETRO_DEVICE_ID_JOYPAD_A};
+        binds[1]  = .{cast(Key_Code)(#char "Z"), RETRO_DEVICE_ID_JOYPAD_B};
+        binds[2]  = .{cast(Key_Code)(#char "A"), RETRO_DEVICE_ID_JOYPAD_Y};
+        binds[3]  = .{cast(Key_Code)(#char "S"), RETRO_DEVICE_ID_JOYPAD_X};
+        binds[4]  = .{.ARROW_UP, RETRO_DEVICE_ID_JOYPAD_UP};
+        binds[5]  = .{.ARROW_DOWN, RETRO_DEVICE_ID_JOYPAD_DOWN};
+        binds[6]  = .{.ARROW_LEFT, RETRO_DEVICE_ID_JOYPAD_LEFT};
+        binds[7]  = .{.ARROW_RIGHT, RETRO_DEVICE_ID_JOYPAD_RIGHT};
+        binds[8]  = .{.ENTER, RETRO_DEVICE_ID_JOYPAD_START};
+        binds[9]  = .{.BACKSPACE, RETRO_DEVICE_ID_JOYPAD_SELECT};
+    }
 
-            saudio_desc: saudio.Desc;
-            saudio_desc.num_channels = 2;
-            saudio_desc.sample_rate = cast(s32)av.timing.sample_rate;
+    Set_Context();
+    did_load := core.load_game(*game_info);
+    if !did_load {
+        log_error("core failed to load game '%'", path);
+        return false;
+    }
 
-            print("initing audio with sample rate % and % channels\n", saudio_desc.sample_rate, saudio_desc.num_channels);
-            saudio.setup(*saudio_desc);
+    av: retro.system_av_info;
+    core.get_system_av_info(*av);
 
-            assert(saudio.isvalid()); // TODO: don't hard crash if we don't have a sound card....
+    // init video
+    video_configure(*av);
 
-            audio.did_init_with_sample_rate = av.timing.sample_rate;
+    // init audio
+    using context.ex;
+    if !audio.mute && av.timing.sample_rate != audio.did_init_with_sample_rate {
+        if audio.did_init_with_sample_rate != -1 {
+            print("AUDIO shutting down\n");
+            saudio.shutdown();
         }
+
+        saudio_desc: saudio.Desc;
+        saudio_desc.num_channels = 2;
+        saudio_desc.sample_rate = cast(s32)av.timing.sample_rate;
+
+        print("initing audio with sample rate % and % channels\n", saudio_desc.sample_rate, saudio_desc.num_channels);
+        saudio.setup(*saudio_desc);
+
+        assert(saudio.isvalid()); // TODO: don't hard crash if we don't have a sound card....
+
+        audio.did_init_with_sample_rate = av.timing.sample_rate;
     }
 
     return true;
@@ -437,6 +488,7 @@ resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
 video_configure :: (av: *retro.system_av_info) -> bool {
     using context.ex;
 
+/*
     {
         geom := *av.geometry;
         nwidth: s32;
@@ -444,10 +496,8 @@ video_configure :: (av: *retro.system_av_info) -> bool {
         resize_to_aspect(geom.aspect_ratio, cast(s32)geom.base_width * 1, cast(s32)geom.base_height * 1, *nwidth, *nheight);
         nwidth = cast(s32)(nwidth * g_scale);
         nheight = cast(s32)(nheight * g_scale);
-
-        video.clip_w = geom.base_width;
-        video.clip_h = geom.base_height;
     }
+    */
 
     video.desired_frame_time = 1.0 / cast(float64)av.timing.fps;
     return true;
@@ -473,15 +523,17 @@ main :: () {
     ////////
 
     core: Core;
-    did_load := load_core(*core);
-    if !did_load {
-        print("Error loading core.\n");
+
+    //GAME :: "run_tree/roms/Bonk's Adventure.zip";
+    GAME :: "run_tree/roms/SM64US.zip";
+
+
+    if !load_core_and_game(*core, GAME) {
         exit(1);
+        return;
     }
+
     defer core.deinit();
-    do_load_game(*core, "run_tree/roms/Bonk's Adventure.zip");
-
-
     ///////
 
     my_init_fonts();
@@ -697,6 +749,7 @@ Input :: #import "Input";
 #import "System";  // For get_path_of_running_executable. @Cleanup.
 #import "String";  // For path_strip_filename. @Cleanup.
 retro :: #import,file "./libretro.jai";
+#import,file "./libretro_extra.jai";
 #import "File_Utilities";
 #import "Process";
 Debug :: #import "Debug";
