@@ -500,7 +500,7 @@ main :: () {
     ///////
 
     my_init_fonts();
-    success := Simp.texture_load_from_file(*image_test, "image_test.jpg");
+    success := Simp.texture_load_from_file(*image_test, "run_tree/images/image_test.jpg");
     assert(success);
 
     quit := false;
@@ -676,7 +676,7 @@ my_init_fonts :: () {
     pixel_height := window_height / 24;
 
     // @Cleanup: Don't have path + name be separate.
-    my_font = Simp.get_font_at_size(".", "OpenSans-BoldItalic.ttf", pixel_height);
+    my_font = Simp.get_font_at_size(".", "run_tree/fonts/OpenSans-BoldItalic.ttf", pixel_height);
     assert(my_font != null);
 }
 
@@ -694,15 +694,17 @@ Input :: #import "Input";
 #import "System";  // For get_path_of_running_executable. @Cleanup.
 #import "String";  // For path_strip_filename. @Cleanup.
 retro :: #import,file "./libretro.jai";
-#import,file "./Dyn_Lib.jai";
 #import "File_Utilities";
 #import "Process";
 Debug :: #import "Debug";
 #import "GL";
-saudio :: #import,file "./Sokol_Audio/module.jai";
 
-// workaround for jai not supporting varargs in #c_call yet. build with "pushd jaitro_c && ./build && popd"
-jaitro_c :: #library,no_dll "jaitro_c/jaitro_c";
+// TODO: use a module import path
+#import,file "./modules/Dyn_Lib.jai";
+saudio :: #import,file "./modules/Sokol_Audio/module.jai";
+
+// workaround for jai not supporting varargs in #c_call yet. build with "pushd modules/jaitro_c && ./build && popd"
+jaitro_c :: #library,no_dll "modules/jaitro_c/jaitro_c";
 core_log :: (level: retro.log_level, fmt: *u8, args: ..Any) #foreign jaitro_c;
 
 #run {
