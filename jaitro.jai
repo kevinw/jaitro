@@ -43,14 +43,12 @@ Push_Context :: () #expand {
 Exec_State :: struct {
     video: struct {
         tex: Simp.Texture;
-        simp_texture_format: Simp.Texture_Format;
-        pitch: u32;
+        core_video_tex_format: Simp.Texture_Format;
         clip_w: u32;
         clip_h: u32;
 
-        pixfmt: u32;
-        pixtype: u32;
-        bpp: u32;
+        fps: float64;
+        desired_frame_time: float64;
     };
 
     joy: [retro.RETRO_DEVICE_ID_JOYPAD_R3 + 1]s16;
@@ -161,7 +159,7 @@ video_refresh :: (data: *void, width: u32, height: u32, pitch: u32) {
         data = bytes,
         width = cast(s32)width,
         height = cast(s32)height,
-        format = video.simp_texture_format,
+        format = video.core_video_tex_format,
         stride = cast(s32)pitch,
     };
 
@@ -227,9 +225,9 @@ video_set_pixel_format :: (format: retro.pixel_format) -> bool {
             log_error("Simp doesn't support _0RGB1555");
             assert(false);
         case .XRGB8888;
-            video.simp_texture_format = .RGBA8;
+            video.core_video_tex_format = .RGBA8;
         case .RGB565;
-            video.simp_texture_format = .B5G6R5;
+            video.core_video_tex_format = .B5G6R5;
         case;
             log_error("unsupported pixel format %", format);
             return false;
@@ -401,7 +399,7 @@ do_load_game :: (core: *Core, path: string) -> bool {
         core.get_system_av_info(*av);
 
         // init video
-        video_configure(*av.geometry);
+        video_configure(*av);
 
         // init audio
         using context.ex;
@@ -428,8 +426,8 @@ do_load_game :: (core: *Core, path: string) -> bool {
 }
 
 resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
-	<<dw = sw;
-	<<dh = sh;
+	dw.* = sw;
+	dh.* = sh;
 
 	if ratio <= 0
 		ratio = cast(float64)sw / sh;
@@ -441,17 +439,24 @@ resize_to_aspect :: (ratio: float64, sw: s32, sh: s32, dw: *s32, dh: *s32) {
     }
 }
 
-video_configure :: (geom: *retro.game_geometry) -> bool {
+video_configure :: (av: *retro.system_av_info) -> bool {
     using context.ex;
 
-    nwidth: s32;
-    nheight: s32;
-	resize_to_aspect(geom.aspect_ratio, cast(s32)geom.base_width * 1, cast(s32)geom.base_height * 1, *nwidth, *nheight);
-	nwidth = cast(s32)(nwidth * g_scale);
-	nheight = cast(s32)(nheight * g_scale);
+    {
+        geom := *av.geometry;
+        nwidth: s32;
+        nheight: s32;
+        resize_to_aspect(geom.aspect_ratio, cast(s32)geom.base_width * 1, cast(s32)geom.base_height * 1, *nwidth, *nheight);
+        nwidth = cast(s32)(nwidth * g_scale);
+        nheight = cast(s32)(nheight * g_scale);
 
-	video.clip_w = geom.base_width;
-	video.clip_h = geom.base_height;
+        video.clip_w = geom.base_width;
+        video.clip_h = geom.base_height;
+    }
+
+    video.fps =  av.timing.fps;
+    video.desired_frame_time = 1.0 / av.timing.fps;
+    print("desired FPS %\n", video.fps);
 
     return true;
 }
@@ -500,7 +505,12 @@ main :: () {
 
     quit := false;
     want_screenshot := false;
+    last_time := seconds_since_init();
     while !quit {
+        current := seconds_since_init();
+        elapsed_seconds := current - last_time;
+        last_time = current;
+
         Input.update_window_events();
 
         for Input.get_window_resizes() {
@@ -538,6 +548,12 @@ main :: () {
             take_screenshot();
             want_screenshot = false;
         }
+
+        // Sleep for desired frame time
+        frame_end_time := seconds_since_init() - current;
+        total_frame_time := elapsed_seconds + frame_end_time;
+        sleep_time := context.ex.video.desired_frame_time - total_frame_time;
+        if sleep_time > 0 sleep_milliseconds(cast(s32)floor(sleep_time * 1000));
 
         //sleep_milliseconds(10);
         reset_temporary_storage();
