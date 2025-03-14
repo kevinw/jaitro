@@ -554,10 +554,22 @@ draw_one_frame :: () {
         if tex.width && tex.height {
             Simp.set_shader_for_images(*tex);
             Simp.immediate_begin();
-            w := window_width;
-            h := window_height;
-            x := 0.0;
-            y := cast(float) window_height;
+
+            aspect_ratio := cast(float)tex.width / cast(float)tex.height;
+            window_aspect_ratio := cast(float)window_width / cast(float)window_height;
+
+            x, y, w, h: float;
+            y = cast(float)window_height;
+            if window_aspect_ratio > aspect_ratio {
+                h = cast(float)window_height;
+                w = h * aspect_ratio;
+                x = window_width * 0.5 - w * 0.5;
+            } else {
+                w = cast(float)window_width;
+                h = w / aspect_ratio;
+                y = cast(float)window_height - (window_height * 0.5 - h * 0.5);
+            }
+
             Simp.immediate_quad(.{x, y-h}, .{x+w, y-h}, .{x+w, y}, .{x, y});
         }
     }
@@ -628,6 +640,7 @@ draw_one_frame :: () {
     }
 
 
+    /*
     if image_test.width && image_test.height {
         // Draw the texture test, to make sure
         // it comes out right-side-up.
@@ -641,6 +654,7 @@ draw_one_frame :: () {
         Simp.immediate_quad(.{0, y0-w}, .{w, y0-w}, .{w, y0}, .{0, y0});
         Simp.immediate_flush();
     }
+    */
 
     /*{ // draw fps text
         color: Vector4 = .{1, 1, 1, 1};
@@ -648,7 +662,6 @@ draw_one_frame :: () {
         Simp.prepare_text(my_font, text);
         Simp.draw_prepared_text(my_font, 0, 50, color);
     }*/
-
 
     Simp.swap_buffers(my_window);
 }
